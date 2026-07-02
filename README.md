@@ -102,22 +102,29 @@ scene, gets machine-checkable feedback, and converges with no human in the loop:
 ```bash
 isotopo capabilities          # machine-readable DSL inventory — read once
 isotopo validate scene.yaml   # JSONPath-located issues + "did you mean" fixes (exit 0/2/3)
-isotopo evaluate scene.yaml   # layout scorecard: crossings / overlaps / edge-tunnelling
+isotopo evaluate scene.yaml   # scorecard: crossings / overlaps / tunnelling + composition score
+isotopo repair   scene.yaml --compose --write   # persist auto-fixes: occlusion, overlap,
+                                                # contrast + bounded alignment snapping
 isotopo render   scene.yaml out
+isotopo snapshot scene.yaml out                 # + faithful topology.png for visual self-review
 isotopo preview  scene.yaml out.svg core edge:3   # crop ONE node / group / edge
 ```
 
-`validate` is a JSON-schema lint with fix suggestions; `evaluate` scores layout
-quality from a deterministic plan view; both let an agent self-correct before it ever
+`validate` is a JSON-schema lint with fix suggestions; `evaluate` scores defects
+*and* composition (balance / alignment / rhythm / hero dominance / accent discipline)
+from a deterministic plan view; `repair` acts on both — fixing defects and snapping
+off-track parts onto their neighbours' alignment tracks, persisted back into the
+source with comments intact. All of it lets an agent self-correct before it ever
 looks at pixels. Output is byte-deterministic — same input, same SVG — which is what
 makes the golden-file tests and clean git diffs work.
 
 ## MCP server
 
 `isotopo-mcp` exposes the whole loop to any MCP client (Claude Code, Claude
-Desktop, Cursor, …) as five stdio tools — `iso_capabilities`, `iso_validate`,
-`iso_evaluate`, `iso_render`, `iso_preview` — so an agent draws *and*
-self-corrects (validate → evaluate → render) without shelling out to the CLI:
+Desktop, Cursor, …) as seven stdio tools — `iso_capabilities`, `iso_validate`,
+`iso_evaluate`, `iso_repair`, `iso_render`, `iso_snapshot`, `iso_preview` — so
+an agent draws, self-corrects, *and* visually reviews its own output
+(validate → repair → render → snapshot) without shelling out to the CLI:
 
 ```bash
 go install github.com/MarkovWangRR/iso-topology/cmd/isotopo-mcp@latest
