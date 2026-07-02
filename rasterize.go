@@ -2,6 +2,8 @@ package isotopo
 
 import (
 	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,6 +67,15 @@ func chromeBinary() string {
 	return ""
 }
 
+// chromeUISlack is extra window height requested from headless Chrome. New
+// headless mode treats --window-size as the WINDOW size and reserves a fixed
+// band (87px on Chromium 141) for browser UI, so the viewport comes out that
+// much shorter — the bottom of the SVG gets clipped and --screenshot pads the
+// image back to full window height with white. Requesting generous slack and
+// cropping the PNG back to the SVG's intrinsic size sidesteps the reservation
+// without depending on its exact, version-specific value.
+const chromeUISlack = 240
+
 // chromeScreenshot renders the SVG in headless Chrome at its intrinsic size.
 func chromeScreenshot(chrome, svgPath, pngPath string) error {
 	w, h, err := svgIntrinsicSize(svgPath)
@@ -75,13 +86,53 @@ func chromeScreenshot(chrome, svgPath, pngPath string) error {
 	if err != nil {
 		return err
 	}
-	return exec.Command(chrome,
+	if err := exec.Command(chrome,
 		"--headless", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
 		"--force-device-scale-factor=1",
-		fmt.Sprintf("--window-size=%d,%d", w, h),
+		fmt.Sprintf("--window-size=%d,%d", w+chromeUISlack, h+chromeUISlack),
 		"--screenshot="+pngPath,
 		"file://"+abs,
-	).Run()
+	).Run(); err != nil {
+		return err
+	}
+	return cropPNG(pngPath, w, h)
+}
+
+// cropPNG rewrites the PNG at path to its top-left w×h region, discarding the
+// white padding a slack-sized Chrome window leaves right of / below the SVG.
+func cropPNG(path string, w, h int) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	img, err := png.Decode(f)
+	f.Close()
+	if err != nil {
+		return fmt.Errorf("rasterize: decode screenshot: %w", err)
+	}
+	b := img.Bounds()
+	if b.Dx() < w || b.Dy() < h {
+		return fmt.Errorf("rasterize: chrome screenshot is %dx%d, smaller than the svg's %dx%d — cannot crop", b.Dx(), b.Dy(), w, h)
+	}
+	if b.Dx() == w && b.Dy() == h {
+		return nil
+	}
+	sub, ok := img.(interface {
+		SubImage(image.Rectangle) image.Image
+	})
+	if !ok {
+		return fmt.Errorf("rasterize: screenshot image type %T does not support cropping", img)
+	}
+	cropped := sub.SubImage(image.Rect(b.Min.X, b.Min.Y, b.Min.X+w, b.Min.Y+h))
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if err := png.Encode(out, cropped); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 var reSVGDims = regexp.MustCompile(`<svg[^>]*\swidth="([0-9.]+)"[^>]*\sheight="([0-9.]+)"`)
