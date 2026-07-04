@@ -53,6 +53,8 @@ description matches your task, imitate its structure, then check
 | [`plan-view-2d`](../../samples/topology/plan-view-2d/input.yaml) | 2D top-down (plan) view — projection declared in the scene's own canvas, so `isotopo render` and the golden test both render it flat. |
 | [`platform-board`](../../samples/topology/platform-board/input.yaml) | platform-board — PCB / circuit-board hero shot, landing-page style. |
 | [`rag-pipeline`](../../samples/topology/rag-pipeline/input.yaml) | rag-pipeline — a RAG system, now under connector-driven auto-layout. |
+| [`repair-route-crossing`](../../samples/topology/repair-route-crossing/input.yaml) | WS-G demo — the routing actuator's CROSSING class. |
+| [`repair-route-tunnel`](../../samples/topology/repair-route-tunnel/input.yaml) | WS-G demo — the routing actuator's TUNNEL class. |
 | [`theme-clean-light`](../../samples/topology/theme-clean-light/input.yaml) | (no header comment) |
 | [`theme-clickhouse-dark`](../../samples/topology/theme-clickhouse-dark/input.yaml) | (no header comment) |
 | [`theme-handdrawn-paper`](../../samples/topology/theme-handdrawn-paper/input.yaml) | (no header comment) |
