@@ -32,7 +32,7 @@ type ConnectorRoute struct {
 	Index   int          `json:"index"`   // index into the scene's Connectors (== data-connector)
 	From    string       `json:"from"`    // resolved source part id (== data-from)
 	To      string       `json:"to"`      // resolved target part id (== data-to)
-	Routing string       `json:"routing"` // effective kind: orthogonal | bezier | straight
+	Routing string       `json:"routing"` // effective kind: orthogonal | orthogonal2 | bezier | straight
 	World   [][2]float64 `json:"world"`   // world (wx, wy) route, source→target, pre-clip
 	Screen  [][2]float64 `json:"screen"`  // screen-user route, parallel to World
 }

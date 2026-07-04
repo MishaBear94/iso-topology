@@ -113,7 +113,9 @@ func isoCollectedRoutes(n *Node, theme *Theme, canvas *Canvas, orthoOnly bool) m
 
 	out := map[int][][2]float64{}
 	for _, r := range routes {
-		if orthoOnly && r.Routing != "orthogonal" {
+		// orthogonal2 serializes data-route just like orthogonal, so it is
+		// inside the legacy regex path's coverage too.
+		if orthoOnly && r.Routing != "orthogonal" && r.Routing != "orthogonal2" {
 			continue
 		}
 		if len(r.World) < 2 {

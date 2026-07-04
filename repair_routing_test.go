@@ -329,3 +329,47 @@ func TestRepairRouting_PersistsToSource(t *testing.T) {
 		t.Fatal("second RepairSource changed the source — not idempotent")
 	}
 }
+
+// TestCollectorCoversUpgradedRoutes pins the wave-1 integration fix: an
+// orthogonal2 connector (as written by repairRouting) must be recorded by the
+// WS-E route collector with its REAL routed corners. Before the fix it fell
+// through to the "straight" default with an empty point list and vanished
+// from collection, so the evaluator scored the plan router's crossing-free
+// fallback instead of the drawn route — repair could "clear" a crossing that
+// was still on screen.
+func TestCollectorCoversUpgradedRoutes(t *testing.T) {
+	data, err := os.ReadFile("samples/topology/repair-route-crossing/input.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	RepairScene(doc)
+	upgraded := -1
+	for i, c := range doc.Scene().Connectors {
+		if c.Routing == "orthogonal2" {
+			upgraded = i
+		}
+	}
+	if upgraded < 0 {
+		t.Fatal("repair should upgrade one connector to orthogonal2")
+	}
+	_, routes := RenderWithRouteInfo(doc.Scene(), doc.Theme, doc.Canvas, doc.Annotations)
+	if len(routes) != len(doc.Scene().Connectors) {
+		t.Fatalf("collector must cover every connector: got %d routes for %d connectors",
+			len(routes), len(doc.Scene().Connectors))
+	}
+	for _, r := range routes {
+		if r.Index != upgraded {
+			continue
+		}
+		if r.Routing != "orthogonal2" {
+			t.Fatalf("upgraded connector recorded as %q, want orthogonal2", r.Routing)
+		}
+		if len(r.World) <= 2 {
+			t.Fatalf("upgraded connector's collected route has %d points — expected a real detour (>2)", len(r.World))
+		}
+	}
+}

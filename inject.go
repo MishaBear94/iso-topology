@@ -1077,8 +1077,12 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		// geometry the regex path never saw.
 		if rc != nil {
 			switch c.Routing {
-			case "orthogonal":
-				rc.add(ci, fromID, toID, "orthogonal", routeWorld, routeScreen)
+			case "orthogonal", "orthogonal2":
+				// orthogonal2 must record its REAL routed corners: dropping it to
+				// the straight default made the evaluator score the plan router's
+				// (crossing-avoiding) fallback instead of the drawn route, so a
+				// repair could "clear" a crossing that was still on screen.
+				rc.add(ci, fromID, toID, c.Routing, routeWorld, routeScreen)
 			case "bezier":
 				rc.add(ci, fromID, toID, "bezier", collWorld, collScreen)
 			default:
