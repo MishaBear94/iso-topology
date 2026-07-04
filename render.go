@@ -13,6 +13,7 @@ package isotopo
 
 import (
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/MarkovWangRR/iso-topology/iso25d"
@@ -135,6 +136,17 @@ func renderComposite(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation) 
 		flat = ordered
 	}
 
+	// v5.2 — canvas.depthSort: true painter's-algorithm ordering. When
+	// enabled, parts are stably re-sorted back-to-front by projected
+	// world depth, merged ACROSS groups, so paint order no longer follows
+	// author order (the legacy behaviour, kept as the default). The
+	// substrate/platform partition above is preserved: slabs stay at the
+	// very back, bodies sort among themselves.
+	depthSorted := canvas != nil && canvas.DepthSort
+	if depthSorted {
+		depthSortParts(flat, nSubstrates, n.GridStep)
+	}
+
 	infos := make([]partInfo, len(flat))
 	glowPad := 0.0
 
@@ -242,7 +254,7 @@ func renderComposite(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation) 
 	//                       = painted first = furthest back)
 	var connRects []screenRect
 	if len(n.Connectors) > 0 {
-		svg, connRects = injectCompositeConnectors(svg, n.Connectors, infos, n.Parts, nSubstrates)
+		svg, connRects = injectCompositeConnectors(svg, n.Connectors, infos, n.Parts, nSubstrates, depthSorted)
 	}
 	if canvas != nil {
 		svg = injectCanvasBackground(svg, canvas)
@@ -340,4 +352,50 @@ func sidesOf(p *CompositePart) int {
 		return p.Geom.Sides
 	}
 	return 0
+}
+
+// depthSortParts (v5.2, canvas.depthSort) reorders the lowered parts
+// back-to-front by projected depth so the painter order is derived from
+// world geometry, not from the author's writing order. The two painter
+// partitions renderComposite already established are preserved — the
+// substrate/platform block [0:nSubstrates) and the body block
+// [nSubstrates:) each sort independently, so slabs always stay under
+// bodies. sort.SliceStable keeps equal-depth parts in author order, so
+// the output stays deterministic (contract: same input, same bytes).
+func depthSortParts(flat []*CompositePart, nSubstrates int, gridStep float64) {
+	sortSeg := func(seg []*CompositePart) {
+		sort.SliceStable(seg, func(i, j int) bool {
+			return partDepthKey(seg[i], gridStep) < partDepthKey(seg[j], gridStep)
+		})
+	}
+	if nSubstrates > len(flat) {
+		nSubstrates = len(flat)
+	}
+	sortSeg(flat[:nSubstrates])
+	sortSeg(flat[nSubstrates:])
+}
+
+// partDepthKey is the painter depth of one lowered part: the corner sum
+// x+y+z of its world back-bottom-left origin. Under this iso camera the
+// view axis is (1, 1, 1) — for two axis-aligned boxes with disjoint
+// footprints, the one with the LARGER origin corner sum is the one that
+// can occlude, so ascending corner sum is a valid back-to-front order
+// (and it naturally interleaves parts from different groups). Injected
+// group captions pin to +Inf so they keep painting above the children
+// they caption, exactly as the lowering pass intended.
+func partDepthKey(p *CompositePart, gridStep float64) float64 {
+	if p.groupLabel {
+		return math.Inf(1)
+	}
+	x, y, z := 0.0, 0.0, 0.0
+	if p.Position != nil && gridStep > 0 {
+		x = float64(p.Position.I) * gridStep
+		y = float64(p.Position.J) * gridStep
+	}
+	if p.Offset != nil {
+		x += p.Offset.WX
+		y += p.Offset.WY
+		z += p.Offset.WZ
+	}
+	return x + y + z
 }

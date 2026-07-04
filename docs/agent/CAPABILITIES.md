@@ -88,6 +88,7 @@ Paint an iso-aware backdrop under the scene. grid: iso draws a diamond rhombus l
 | Field | Meaning |
 |---|---|
 | `background` | solid background color (also bleed color behind patterns) |
+| `depthSort` | v5.2 — true / false (default false). Painter's-algorithm depth sort: parts paint back-to-front by world depth (corner sum x+y+z), merged across groups, instead of author order; connector routes layer by their endpoints' depth instead of sitting under every body. Group slabs/platforms still paint at the very back. Turn on when parts from different groups overlap in projection or when author order would paint a back part over a front one. Iso projection only (no effect with projection: top). |
 | `grid` | iso | dots | hatch | solid | none |
 | `gridColor` | pattern stroke / dot color |
 | `gridStep` | tile size in world units (default 40) |
