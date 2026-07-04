@@ -24,14 +24,19 @@ import (
 //
 //	move       — Target node|edge + DWX/DWY world drag delta (+ Snap grid step,
 //	             or Waypoints for a drawio-style per-segment edge edit)
+//	move-multi — IDs + DWX/DWY: apply the SAME world delta to every listed node
+//	             in ONE text surgery (Studio group-move). Atomic: any id that
+//	             fails aborts the whole op and the source is returned unchanged.
 //	set-field  — Target node|edge|canvas + Fields: dotted YAML path → value
 //	add        — append a default rectangle part to the scene
 //	delete     — Target node|edge (a node also drops its connectors)
+//	delete-multi — IDs: delete every listed node in one atomic surgery
 //	duplicate  — Target node: clone it with a fresh id, offset down-right
 type EditOp struct {
 	Kind      string            `json:"kind"`
 	Target    string            `json:"target,omitempty"` // node | edge | canvas
 	ID        string            `json:"id,omitempty"`     // part id
+	IDs       []string          `json:"ids,omitempty"`    // move-multi / delete-multi: batch part ids
 	CI        int               `json:"ci,omitempty"`     // connector index
 	Fields    map[string]string `json:"fields,omitempty"` // set-field: path → value
 	DWX       float64           `json:"dwx,omitempty"`    // move: world drag delta
@@ -115,13 +120,17 @@ func applyOpText(format string, src []byte, op EditOp) ([]byte, error) {
 	// lists; d2 is left alone.
 	if format != "d2" {
 		switch op.Kind {
-		case "move", "set-field", "delete", "duplicate", "reparent":
+		case "move", "move-multi", "set-field", "delete", "delete-multi", "duplicate", "reparent":
 			src = []byte(yamledit.ExpandInlineParts(string(src)))
 		}
 	}
 	switch op.Kind {
 	case "move":
 		return applyMove(format, src, op)
+	case "move-multi":
+		return applyMoveMulti(format, src, op)
+	case "delete-multi":
+		return applyDeleteMulti(format, src, op)
 	case "set-field":
 		return applySetField(src, op)
 	case "add":
@@ -333,7 +342,13 @@ func freezeOffsets(out string, offs map[string][3]float64, nudgeID string, dwx, 
 	return out
 }
 
-func applyMove(format string, src []byte, op EditOp) ([]byte, error) {
+// applyMoveNode is the node half of the move op WITHOUT the connector-reroute
+// pass: it returns the text with the node's offset rewritten (freezing layout
+// scenes/groups exactly as before). applyMove wraps it with a reroute so the
+// single-move behaviour is unchanged; applyMoveMulti chains it across every id
+// first and reroutes once at the end — mid-batch rerouting would score edges
+// against partners that haven't moved yet and bake stale detours in.
+func applyMoveNode(format string, src []byte, op EditOp) ([]byte, error) {
 	doc, derr := LoadInput(context.Background(), format, src, LayoutDagre)
 	if derr != nil {
 		return src, derr
@@ -345,72 +360,148 @@ func applyMove(format string, src []byte, op EditOp) ([]byte, error) {
 		return v
 	}
 	s := string(src)
+	// A node nested in a LAYOUT-driven group: the root-only freeze below
+	// never moves it (ResolveAllOffsets/SceneNeedsFreeze are root-scoped).
+	// Freeze that group instead — drop its layout and pin every child to its
+	// resolved offset — so the dragged child can actually move. Freeze the
+	// root too if it still needs it, so the group itself stays put.
+	if parent := parentOf(doc, op.ID); parent != "" && GroupHasLayout(doc, parent) {
+		out := s
+		if SceneNeedsFreeze(doc) {
+			out = freezeOffsets(yamledit.FreezeLayoutText(out), ResolveAllOffsets(doc), "", 0, 0, snap)
+		}
+		out = yamledit.FreezeGroupLayoutText(out, parent)
+		out = freezeOffsets(out, ResolveChildOffsets(doc, parent), op.ID, op.DWX, op.DWY, snap)
+		return []byte(out), nil
+	}
+	// drawio model: the FIRST manual move freezes the whole scene into
+	// explicit coordinates and drops auto-layout, so the engine never
+	// re-decides positions; later moves just nudge one node.
+	if parentOf(doc, op.ID) == "" && SceneNeedsFreeze(doc) {
+		offs := ResolveAllOffsets(doc)
+		out := yamledit.FreezeLayoutText(s)
+		ids := make([]string, 0, len(offs))
+		for id := range offs {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			o := offs[id]
+			wx, wy, wz := o[0], o[1], o[2]
+			if id == op.ID {
+				wx, wy = snap(wx+op.DWX), snap(wy+op.DWY)
+			}
+			var ok bool
+			out, ok = yamledit.UpsertInlineKey(out, yamledit.FindPartIDLine(out, id), "offset", wx, wy, wz)
+			if !ok {
+				return src, fmt.Errorf("move: part %q not found after freeze", id)
+			}
+		}
+		return []byte(out), nil
+	}
+	// Prefer the AUTHORED offset (read from the source text) when the part has
+	// one: ResolvePartOffset returns the resolved render position, which inside
+	// an autosize group folds in the slab's padding shift — baking that back
+	// made a move non-idempotent (a zero-delta drag jumped the node by the
+	// padding). The authored offset is the true base; fall back to resolving
+	// only when the part has no offset yet (pure auto-layout).
+	cx, cy, cz, authored := yamledit.ReadInlineOffset(s, yamledit.FindPartIDLine(s, op.ID))
+	if !authored {
+		// No authored offset — derive the part's CURRENT local offset from the
+		// renderer's own resolver (world position minus its parent's child
+		// origin), not ResolvePartOffset, whose solved baseline diverges from
+		// what's drawn and made a move of an offset-less node non-idempotent.
+		lowered := resolveLowered(doc)
+		if lowered[op.ID] == nil {
+			return src, fmt.Errorf("move: part %q not found", op.ID)
+		}
+		wx, wy, wz := worldXYZ(lowered[op.ID])
+		cox, coy, coz := childOrigin(doc, lowered, s, parentOf(doc, op.ID))
+		cx, cy, cz = wx-cox, wy-coy, wz-coz
+	}
+	out, ok := yamledit.UpsertInlineKey(s, yamledit.FindPartIDLine(s, op.ID), "offset", snap(cx+op.DWX), snap(cy+op.DWY), cz)
+	if !ok {
+		return src, fmt.Errorf("move: part %q line not found", op.ID)
+	}
+	return []byte(out), nil
+}
+
+// dedupIDs returns op ids de-duplicated in first-seen order: a batch must apply
+// each node's delta exactly once even if the caller lists an id twice.
+func dedupIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+// applyMoveMulti applies the SAME world delta to every node in op.IDs as one
+// atomic text surgery: the moves chain on a working copy and the ORIGINAL
+// source is returned untouched if any id fails (all-or-nothing, so a partial
+// group move can never be persisted). Connector rerouting runs once at the
+// end, against the final positions, so edges between two moved nodes are
+// scored where they actually land.
+func applyMoveMulti(format string, src []byte, op EditOp) ([]byte, error) {
+	ids := dedupIDs(op.IDs)
+	if len(ids) == 0 {
+		return src, fmt.Errorf("move-multi: ids required")
+	}
+	out := src
+	for _, id := range ids {
+		sub := op
+		sub.Kind, sub.Target, sub.ID, sub.IDs = "move", "node", id, nil
+		var err error
+		out, err = applyMoveNode(format, out, sub)
+		if err != nil {
+			return src, fmt.Errorf("move-multi %q: %w", id, err)
+		}
+	}
+	for _, id := range ids {
+		out = rerouteMovedConnectors(format, out, id)
+	}
+	return out, nil
+}
+
+// applyDeleteMulti deletes every node in op.IDs (each also dropping its
+// connectors, exactly like a single delete) in one atomic surgery: any id that
+// fails — missing, a container, an anchor donor — aborts the whole batch and
+// the original source is returned unchanged.
+func applyDeleteMulti(format string, src []byte, op EditOp) ([]byte, error) {
+	ids := dedupIDs(op.IDs)
+	if len(ids) == 0 {
+		return src, fmt.Errorf("delete-multi: ids required")
+	}
+	out := src
+	for _, id := range ids {
+		var err error
+		out, err = applyDelete(format, out, EditOp{Kind: "delete", Target: "node", ID: id})
+		if err != nil {
+			return src, fmt.Errorf("delete-multi %q: %w", id, err)
+		}
+	}
+	return out, nil
+}
+
+func applyMove(format string, src []byte, op EditOp) ([]byte, error) {
+	if op.Target == "node" {
+		out, err := applyMoveNode(format, src, op)
+		if err != nil {
+			return src, err
+		}
+		return rerouteMovedConnectors(format, out, op.ID), nil
+	}
+	doc, derr := LoadInput(context.Background(), format, src, LayoutDagre)
+	if derr != nil {
+		return src, derr
+	}
+	s := string(src)
 	switch op.Target {
-	case "node":
-		// A node nested in a LAYOUT-driven group: the root-only freeze below
-		// never moves it (ResolveAllOffsets/SceneNeedsFreeze are root-scoped).
-		// Freeze that group instead — drop its layout and pin every child to its
-		// resolved offset — so the dragged child can actually move. Freeze the
-		// root too if it still needs it, so the group itself stays put.
-		if parent := parentOf(doc, op.ID); parent != "" && GroupHasLayout(doc, parent) {
-			out := s
-			if SceneNeedsFreeze(doc) {
-				out = freezeOffsets(yamledit.FreezeLayoutText(out), ResolveAllOffsets(doc), "", 0, 0, snap)
-			}
-			out = yamledit.FreezeGroupLayoutText(out, parent)
-			out = freezeOffsets(out, ResolveChildOffsets(doc, parent), op.ID, op.DWX, op.DWY, snap)
-			return rerouteMovedConnectors(format, []byte(out), op.ID), nil
-		}
-		// drawio model: the FIRST manual move freezes the whole scene into
-		// explicit coordinates and drops auto-layout, so the engine never
-		// re-decides positions; later moves just nudge one node.
-		if parentOf(doc, op.ID) == "" && SceneNeedsFreeze(doc) {
-			offs := ResolveAllOffsets(doc)
-			out := yamledit.FreezeLayoutText(s)
-			ids := make([]string, 0, len(offs))
-			for id := range offs {
-				ids = append(ids, id)
-			}
-			sort.Strings(ids)
-			for _, id := range ids {
-				o := offs[id]
-				wx, wy, wz := o[0], o[1], o[2]
-				if id == op.ID {
-					wx, wy = snap(wx+op.DWX), snap(wy+op.DWY)
-				}
-				var ok bool
-				out, ok = yamledit.UpsertInlineKey(out, yamledit.FindPartIDLine(out, id), "offset", wx, wy, wz)
-				if !ok {
-					return src, fmt.Errorf("move: part %q not found after freeze", id)
-				}
-			}
-			return rerouteMovedConnectors(format, []byte(out), op.ID), nil
-		}
-		// Prefer the AUTHORED offset (read from the source text) when the part has
-		// one: ResolvePartOffset returns the resolved render position, which inside
-		// an autosize group folds in the slab's padding shift — baking that back
-		// made a move non-idempotent (a zero-delta drag jumped the node by the
-		// padding). The authored offset is the true base; fall back to resolving
-		// only when the part has no offset yet (pure auto-layout).
-		cx, cy, cz, authored := yamledit.ReadInlineOffset(s, yamledit.FindPartIDLine(s, op.ID))
-		if !authored {
-			// No authored offset — derive the part's CURRENT local offset from the
-			// renderer's own resolver (world position minus its parent's child
-			// origin), not ResolvePartOffset, whose solved baseline diverges from
-			// what's drawn and made a move of an offset-less node non-idempotent.
-			lowered := resolveLowered(doc)
-			if lowered[op.ID] == nil {
-				return src, fmt.Errorf("move: part %q not found", op.ID)
-			}
-			wx, wy, wz := worldXYZ(lowered[op.ID])
-			cox, coy, coz := childOrigin(doc, lowered, s, parentOf(doc, op.ID))
-			cx, cy, cz = wx-cox, wy-coy, wz-coz
-		}
-		out, ok := yamledit.UpsertInlineKey(s, yamledit.FindPartIDLine(s, op.ID), "offset", snap(cx+op.DWX), snap(cy+op.DWY), cz)
-		if !ok {
-			return src, fmt.Errorf("move: part %q line not found", op.ID)
-		}
-		return rerouteMovedConnectors(format, []byte(out), op.ID), nil
 	case "edge":
 		// Per-segment waypoint edit (drawio-style) when supplied; else the
 		// legacy single-corner bend accumulated from the current value.
