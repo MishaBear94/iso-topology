@@ -18,11 +18,11 @@ func RepairAndReport(doc *Document) (iters int, fixed []string) {
 		return 0, nil
 	}
 	beforeOcc := occlusionMessages(doc)
-	beforeOver := Readability(doc).Overlaps
+	beforeRead := Readability(doc)
 	beforeContrast := contrastIssueCount(doc)
 	_, iters = RepairScene(doc)
 	afterOcc := occlusionMessages(doc)
-	afterOver := Readability(doc).Overlaps
+	afterRead := Readability(doc)
 	afterContrast := contrastIssueCount(doc)
 	for msg := range beforeOcc {
 		if !afterOcc[msg] {
@@ -30,11 +30,17 @@ func RepairAndReport(doc *Document) (iters int, fixed []string) {
 		}
 	}
 	sort.Strings(fixed)
-	if d := beforeOver - afterOver; d > 0 {
+	if d := beforeRead.Overlaps - afterRead.Overlaps; d > 0 {
 		fixed = append(fixed, fmt.Sprintf("separated %d overlapping node pair(s)", d))
 	}
 	if d := beforeContrast - afterContrast; d > 0 {
 		fixed = append(fixed, fmt.Sprintf("raised label contrast on %d node(s)", d))
+	}
+	if d := beforeRead.Tunnels - afterRead.Tunnels; d > 0 {
+		fixed = append(fixed, fmt.Sprintf("rerouted: cleared %d edge(s) tunnelling through nodes", d))
+	}
+	if d := beforeRead.Crossings - afterRead.Crossings; d > 0 {
+		fixed = append(fixed, fmt.Sprintf("rerouted: removed %d edge crossing(s)", d))
 	}
 	return iters, fixed
 }
@@ -73,10 +79,14 @@ var neighbourOcclRe = regexp.MustCompile(`label "([^"]+)" is covered by node.*ad
 // master-plan.md): it measures the rendered scene and locally repairs the
 // defects that only exist in the projected output, re-checking each round until
 // the scene is clean or a budget is hit — "optimize in the space you render".
-// v1 repairs two defect classes:
+// Repaired defect classes:
 //   - caption clearance: a group label ridden by its front-most child → widen
 //     the group's front padding;
-//   - node overlap: two top-level footprints collide → push them apart.
+//   - node overlap: two sibling footprints collide — at the top level AND
+//     (WS-G) inside each group — → push them apart;
+//   - routing (WS-G): an orthogonal connector crossing another edge or
+//     tunnelling a node → escalate it to routing:"orthogonal2", kept only on
+//     strict measured improvement (repair_routing.go).
 //
 // It is a strict no-op on an already-clean scene (0 iterations, byte-identical
 // output), so it is safe to run unconditionally. Returns the doc and iteration
@@ -99,8 +109,15 @@ func RepairScene(doc *Document) (*Document, int) {
 		if repairContrast(doc) {
 			changed = true
 		}
-		if scene := doc.Scene(); scene != nil && repairOverlaps(doc, scene) {
-			changed = true
+		if scene := doc.Scene(); scene != nil {
+			if repairOverlaps(doc, scene) {
+				changed = true
+			}
+			// Routing last: it measures the routes AROUND the positions the
+			// passes above just settled.
+			if repairRouting(doc, scene) {
+				changed = true
+			}
 		}
 		if !changed {
 			break // converged (or nothing left we can fix)
@@ -197,9 +214,12 @@ func repairCaptions(doc *Document) bool {
 	return bumped
 }
 
-// repairOverlaps pushes genuinely-colliding TOP-LEVEL parts apart along their
+// repairOverlaps pushes genuinely-colliding SIBLING parts apart along their
 // axis of least penetration by nudging each side's offset. One pass; returns
-// whether anything moved.
+// whether anything moved. It runs in two scopes:
+//   - the scene's top level (the historical pass, unchanged behaviour);
+//   - (WS-G) each group's direct children, in the group's own frame, under a
+//     conservative measured-improvement guard (repairGroupOverlaps).
 //
 // It uses the evaluator's OWN overlap test (rectsOverlap on the plan model) —
 // an (x,y) collision that ALSO shares a vertical band — instead of a naive
@@ -210,81 +230,197 @@ func repairCaptions(doc *Document) bool {
 // an offset delta on the real parts (offset is a fine-tune on top of place).
 func repairOverlaps(doc *Document, scene *Node) bool {
 	rects, _, _ := buildPlanModel(cloneSceneForEval(scene), doc.Theme, doc.Canvas)
-	// Map every part id (at any depth) to its TOP-LEVEL ancestor — the part we
-	// can actually relocate by nudging its offset. A collision between a loose
-	// node and another group's *child* is resolved by pushing the two top-level
-	// owners apart.
-	descTop := map[string]*CompositePart{}
-	var mark func(top, p *CompositePart)
-	mark = func(top, p *CompositePart) {
+	moved := pushApart(siblingCollisions(scene.Parts, rects))
+	if repairGroupOverlaps(doc, scene, rects) {
+		moved = true
+	}
+	return moved
+}
+
+// sibCollision is one genuinely-colliding pair within a sibling scope: the two
+// colliding footprints plus, for each, the ancestor that is a DIRECT child of
+// the scope — the part the actuator can actually relocate by nudging its
+// offset. (A collision between a loose node and another group's *child* is
+// resolved by pushing the two siblings apart.)
+type sibCollision struct {
+	ra, rb planRect
+	pa, pb *CompositePart
+}
+
+// siblingCollisions detects the colliding pairs among one scope's direct
+// children (the scene's top level, or one group's parts). The collision set is
+// every leaf under the scope, PLUS each sibling group's own slab — so two
+// category trays whose slabs collide (even when no leaf inside them does) are
+// paired, not just leaf-vs-leaf. Pairs sharing the same direct-child owner
+// (intra-sibling) are skipped; rects from outside the scope have no owner here
+// and are skipped too.
+func siblingCollisions(siblings []*CompositePart, rects []planRect) []sibCollision {
+	descOwner := map[string]*CompositePart{}
+	var mark func(owner, p *CompositePart)
+	mark = func(owner, p *CompositePart) {
 		if p.ID != "" {
-			descTop[p.ID] = top
+			descOwner[p.ID] = owner
 		}
 		for _, c := range p.Parts {
 			if c != nil {
-				mark(top, c)
+				mark(owner, c)
 			}
 		}
 	}
-	for _, p := range scene.Parts {
+	sibIDs := map[string]bool{}
+	for _, p := range siblings {
 		if p != nil {
 			mark(p, p)
+			if p.ID != "" {
+				sibIDs[p.ID] = true
+			}
 		}
 	}
-	// Collision set: every leaf, PLUS each top-level group's own slab — so two
-	// category trays whose slabs collide (even when no leaf inside them does) are
-	// separated, not just leaf-vs-leaf. Parent/child pairs share a top-level
-	// owner below and are skipped there.
-	topIDs := map[string]bool{}
-	for _, p := range scene.Parts {
-		if p != nil && p.ID != "" {
-			topIDs[p.ID] = true
-		}
-	}
-	var leaves []planRect
+	var boxes []planRect
 	for _, r := range rects {
-		if !r.container || topIDs[r.id] {
-			leaves = append(leaves, r)
+		if !r.container || sibIDs[r.id] {
+			boxes = append(boxes, r)
 		}
 	}
-	const margin = 10.0
-	moved := false
-	for a := 0; a < len(leaves); a++ {
-		for b := a + 1; b < len(leaves); b++ {
-			ra, rb := leaves[a], leaves[b]
-			pa, pb := descTop[ra.id], descTop[rb.id]
+	var out []sibCollision
+	for a := 0; a < len(boxes); a++ {
+		for b := a + 1; b < len(boxes); b++ {
+			ra, rb := boxes[a], boxes[b]
+			pa, pb := descOwner[ra.id], descOwner[rb.id]
 			if pa == nil || pb == nil || pa == pb {
-				continue // same top-level owner (intra-group) or unknown — skip
+				continue // same sibling owner or outside this scope — skip
 			}
 			if !rectsOverlap(ra, rb) {
 				continue // no real collision (e.g. Z-stacked) — leave it alone
 			}
-			ox := math.Min(ra.x+ra.w, rb.x+rb.w) - math.Max(ra.x, rb.x)
-			oy := math.Min(ra.y+ra.d, rb.y+rb.d) - math.Max(ra.y, rb.y)
-			// push half the penetration (+margin) each, along the smaller axis.
-			if ox <= oy {
-				push := (ox + margin) / 2
-				if ra.x <= rb.x {
-					nudge(pa, -push, 0)
-					nudge(pb, +push, 0)
-				} else {
-					nudge(pa, +push, 0)
-					nudge(pb, -push, 0)
-				}
+			out = append(out, sibCollision{ra: ra, rb: rb, pa: pa, pb: pb})
+		}
+	}
+	return out
+}
+
+// pushApart separates each colliding pair: half the penetration (+margin) to
+// each side, along the axis of least penetration. Returns whether anything
+// moved.
+func pushApart(cols []sibCollision) bool {
+	const margin = 10.0
+	for _, c := range cols {
+		ra, rb := c.ra, c.rb
+		ox := math.Min(ra.x+ra.w, rb.x+rb.w) - math.Max(ra.x, rb.x)
+		oy := math.Min(ra.y+ra.d, rb.y+rb.d) - math.Max(ra.y, rb.y)
+		if ox <= oy {
+			push := (ox + margin) / 2
+			if ra.x <= rb.x {
+				nudge(c.pa, -push, 0)
+				nudge(c.pb, +push, 0)
 			} else {
-				push := (oy + margin) / 2
-				if ra.y <= rb.y {
-					nudge(pa, 0, -push)
-					nudge(pb, 0, +push)
-				} else {
-					nudge(pa, 0, +push)
-					nudge(pb, 0, -push)
-				}
+				nudge(c.pa, +push, 0)
+				nudge(c.pb, -push, 0)
 			}
+		} else {
+			push := (oy + margin) / 2
+			if ra.y <= rb.y {
+				nudge(c.pa, 0, -push)
+				nudge(c.pb, 0, +push)
+			} else {
+				nudge(c.pa, 0, +push)
+				nudge(c.pb, 0, -push)
+			}
+		}
+	}
+	return len(cols) > 0
+}
+
+// repairGroupOverlaps extends the overlap actuator INTO groups (the master
+// plan's "nested overlaps use only the top-level pass" gap): every group's
+// direct children get the same push-apart, in the group's own frame — a child
+// offset delta moves the child within its parent, and any resulting overflow
+// is the existing autosize / validate-fit machinery's business.
+//
+// Conservative by contract: the whole round is measured. The nudges are kept
+// only when the in-group collision count strictly drops AND the scene's
+// readability cost does not rise; otherwise every nudge is rolled back and
+// the pass reports no change, so a scene this pass cannot strictly improve
+// renders byte-for-byte as before.
+func repairGroupOverlaps(doc *Document, scene *Node, rects []planRect) bool {
+	var groups []*CompositePart
+	walkPartTree(scene.Parts, func(p *CompositePart) {
+		if len(p.Parts) > 1 {
+			groups = append(groups, p)
+		}
+	})
+	if len(groups) == 0 {
+		return false
+	}
+	before := 0
+	cols := make([][]sibCollision, len(groups))
+	for i, g := range groups {
+		cols[i] = siblingCollisions(g.Parts, rects)
+		before += len(cols[i])
+	}
+	if before == 0 {
+		return false
+	}
+	costBefore := Readability(doc).Cost
+	saved := snapshotOffsetsDeep(scene.Parts)
+	moved := false
+	for _, c := range cols {
+		if pushApart(c) {
 			moved = true
 		}
 	}
-	return moved
+	if !moved {
+		return false
+	}
+	rects2, _, _ := buildPlanModel(cloneSceneForEval(scene), doc.Theme, doc.Canvas)
+	after := 0
+	for _, g := range groups {
+		after += len(siblingCollisions(g.Parts, rects2))
+	}
+	if after >= before || Readability(doc).Cost > costBefore+1e-9 {
+		restoreOffsetsDeep(scene.Parts, saved)
+		return false
+	}
+	return true
+}
+
+// snapshotOffsetsDeep copies every part's Offset (nil included) across the
+// WHOLE tree in DFS order — the deep sibling of force_layout.go's top-level
+// snapshotOffsets — so a measured-and-rejected round can be rolled back
+// exactly.
+func snapshotOffsetsDeep(parts []*CompositePart) []*WorldPoint {
+	var out []*WorldPoint
+	walkPartTree(parts, func(p *CompositePart) {
+		if p.Offset != nil {
+			o := *p.Offset
+			out = append(out, &o)
+		} else {
+			out = append(out, nil)
+		}
+	})
+	return out
+}
+
+// restoreOffsetsDeep writes a snapshotOffsetsDeep copy back (same DFS order).
+func restoreOffsetsDeep(parts []*CompositePart, saved []*WorldPoint) {
+	i := 0
+	walkPartTree(parts, func(p *CompositePart) {
+		if i < len(saved) {
+			p.Offset = saved[i]
+		}
+		i++
+	})
+}
+
+// walkPartTree visits every part under the given slice, depth-first.
+func walkPartTree(parts []*CompositePart, fn func(*CompositePart)) {
+	for _, p := range parts {
+		if p == nil {
+			continue
+		}
+		fn(p)
+		walkPartTree(p.Parts, fn)
+	}
 }
 
 // nudge adds a world (dx,dy) delta to a part's offset, creating it if absent.

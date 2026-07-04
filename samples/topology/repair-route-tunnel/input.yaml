@@ -1,0 +1,25 @@
+# WS-G demo — the routing actuator's TUNNEL class.
+#
+# Ingest and Warehouse are collinear with Queue squarely in the corridor, so
+# the v1 orthogonal route runs straight THROUGH Queue (readability tunnels=1).
+# This golden freezes the raw render (defect visible). The repair loop
+# (`isotopo render` runs it by default) measures the defect, escalates the
+# connector to routing:"orthogonal2", verifies the weighted defect sum drops
+# to zero, and keeps the detour — see TestRepairDemoSamples in
+# repair_routing_test.go.
+canvas: { background: "#0E1726", padding: 50 }
+nodes:
+  scene:
+    shape: composite
+    parts:
+      - { id: ingest, shape: rectangle, geom: { w: 80, d: 70, h: 34 }, label: "Ingest",
+          style: { palette: { top: "#274060" }, text: { color: "#DCE7F5" } } }
+      - { id: queue, shape: rectangle, geom: { w: 80, d: 70, h: 56 }, label: "Queue",
+          offset: { wx: 220, wy: 0 },
+          style: { palette: { top: "#4A3A72" }, text: { color: "#DCE7F5" } } }
+      - { id: warehouse, shape: rectangle, geom: { w: 80, d: 70, h: 34 }, label: "Warehouse",
+          offset: { wx: 440, wy: 0 },
+          style: { palette: { top: "#3E5426" }, text: { color: "#DCE7F5" } } }
+    connectors:
+      - { from: ingest, to: warehouse, routing: orthogonal, arrow: triangle,
+          stroke: { color: "#7FB0E0" } }
