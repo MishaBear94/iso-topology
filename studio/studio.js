@@ -64,7 +64,7 @@ const I18N={
     ctx_add:"＋ Add node", ctx_edit:"✎ Edit details", ctx_dup:"⧉ Duplicate", ctx_del:"✕ Delete",
     detail_title:"Edit details", detail_cancel:"Cancel", detail_apply:"Update",
     foot_hover:"Hover a node to jump to its source · click to pin · double-click or right-click to edit",
-    foot_zoom:"Scroll to zoom · drag to pan · double-click empty canvas to reset",
+    foot_zoom:"Scroll to zoom · drag empty canvas to box-select (shift+click adds) · alt-drag or middle-drag to pan · double-click empty canvas to reset",
     foot_render:"render", foot_shortcuts:"all shortcuts",
     foot_origsvg:"Original SVG", foot_browse:"Browse nodes", foot_about:"About Studio",
     // dynamic
@@ -105,7 +105,7 @@ const I18N={
     ctx_add:"＋ 添加节点", ctx_edit:"✎ 编辑详情", ctx_dup:"⧉ 复制", ctx_del:"✕ 删除",
     detail_title:"编辑详情", detail_cancel:"取消", detail_apply:"更新",
     foot_hover:"悬停节点跳转到源码 · 点击固定 · 双击或右键编辑",
-    foot_zoom:"滚轮缩放 · 拖动平移 · 双击空白画布重置",
+    foot_zoom:"滚轮缩放 · 空白处拖动框选(shift+点击增删) · alt 或中键拖动平移 · 双击空白画布重置",
     foot_render:"渲染", foot_shortcuts:"全部快捷键",
     foot_origsvg:"原始 SVG", foot_browse:"浏览节点", foot_about:"关于 Studio",
     // dynamic
@@ -264,6 +264,64 @@ function glowOnly(id){
     g.classList.toggle('hi', gid===id || (id!==null && gid.replace(/~\d+$/,'')===id));
   });
 }
+
+/* ── multi-select: marquee box selection + shift-click + group move ──────
+   `selection` holds BASE part ids (no ~N stack suffix). Selected nodes get
+   the .sel class (persistent accent outline). Sources of truth:
+     marquee drag on empty canvas   → replace (or extend with shift)
+     shift+click on a node          → toggle that node
+     Esc / plain click empty canvas → clear
+   Only LEAF nodes are marquee-selectable: putting a container AND its child
+   in one selection would double-move the child (the container's offset
+   already carries it). Containers keep their existing single-drag path. */
+let selection=new Set();
+function baseId(g){return g.getAttribute('data-part-id').replace(/~\d+$/,'');}
+function applySelectionClasses(){
+  zoomer.querySelectorAll('g[data-part-id]').forEach(g=>{
+    g.classList.toggle('sel', selection.has(baseId(g)));
+  });
+}
+function setSelection(ids){ selection=new Set(ids); applySelectionClasses(); }
+function clearSelection(){ if(selection.size){ selection.clear(); applySelectionClasses(); } }
+function toggleSelect(id){ selection.has(id)?selection.delete(id):selection.add(id); applySelectionClasses(); }
+// After a re-render replaces the SVG, drop ids that no longer exist and
+// re-apply the .sel classes to the fresh elements.
+function pruneSelection(){
+  if(window.interactionModel&&selection.size){
+    const live=new Set(window.interactionModel.map(p=>p.id));
+    for(const id of [...selection]) if(!live.has(id)) selection.delete(id);
+  }
+  applySelectionClasses();
+}
+// Screen-space AABB of a model part: project the world box's 8 corners with
+// the SAME iso projection the renderer uses (worldToSvgUser), then map to
+// screen px via the live CTM. Pure model math — no SVG DOM hit-testing.
+function partScreenAABB(pm){
+  const svg=zoomer.querySelector('svg'); if(!svg) return null;
+  const m=svg.getScreenCTM(); if(!m) return null;
+  const zs=[pm.z||0,(pm.z||0)+(pm.h||0)];
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  for(const wx of [pm.x,pm.x+pm.w]) for(const wy of [pm.y,pm.y+pm.d]) for(const wz of zs){
+    const [ux,uy]=worldToSvgUser(wx,wy,wz);
+    const sx=m.a*ux+m.c*uy+m.e, sy=m.b*ux+m.d*uy+m.f;
+    if(sx<minX)minX=sx; if(sx>maxX)maxX=sx; if(sy<minY)minY=sy; if(sy>maxY)maxY=sy;
+  }
+  return {minX,minY,maxX,maxY};
+}
+// marqueeHits: ids of leaf nodes whose projected AABB intersects the screen
+// rect {left,top,right,bottom}. Uses the server's interaction model.
+function marqueeHits(r){
+  const out=[];
+  if(!window.interactionModel||!r) return out;
+  for(const pm of window.interactionModel){
+    if(pm.container) continue;
+    const b=partScreenAABB(pm); if(!b) continue;
+    if(b.minX<=r.right&&b.maxX>=r.left&&b.minY<=r.bottom&&b.maxY>=r.top) out.push(pm.id);
+  }
+  return out;
+}
+// E2E hook: tests read the live selection without poking at internals.
+window.studioSelection=()=>[...selection];
 /* ── drag-to-connect: draw a new connector by dragging from a node ────────
    Hovering a node shows 4 handle dots at the iso face centres (top, left,
    right) and the nadir vertex. Positions are computed from the actual polygon
@@ -537,6 +595,14 @@ function wireHover(){
     });
     g.addEventListener('click',e=>{
       e.stopPropagation();
+      // shift+click = add/remove this node in the multi-selection (leaves
+      // only — a container in a group selection would double-move its
+      // children). It never pins, so the two idioms don't fight.
+      if(e.shiftKey){
+        const bid=id.replace(/~\d+$/,'');
+        if(!isContainerId(bid)) toggleSelect(bid);
+        return;
+      }
       pinId = (pinId===id)?null:id; pinCi=null;   // pinning a node clears any edge pin
       glowOnly(pinId); glowEdge(null);
       const pr=pinnedRange();
@@ -659,12 +725,17 @@ function shiftEnds(d,moveFrom,moveTo,dx,dy){
   return s;
 }
 const SNAP_STEP=40;   // one grid cell (world units)
-async function commitMove(kind,key,dwx,dwy,dropX,dropY,wp){
+// ids (optional): a multi-selection group move — the server applies the same
+// delta to every id atomically in ONE round-trip (/api/move&ids=…), so the
+// batch is a single UNDO step and can never half-apply.
+async function commitMove(kind,key,dwx,dwy,dropX,dropY,wp,ids){
   if(!serverOK) return;
   pushUndo();
   const snapEl=document.getElementById('snap');
   const snap=(kind==='node' && snapEl && snapEl.checked) ? SNAP_STEP : 0;
+  const multi=!!(ids&&ids.length>1);
   let qp = kind==='node' ? 'kind=node&id='+encodeURIComponent(key) : 'kind=edge&ci='+key;
+  if(multi) qp='kind=node&ids='+encodeURIComponent(JSON.stringify(ids));
   if(wp) qp += '&wp='+encodeURIComponent(JSON.stringify(wp));
   try{
     const r=await fetch('/api/move?'+qp+'&dwx='+dwx+'&dwy='+dwy+'&snap='+snap+'&format='+encodeURIComponent(LANG)+projQS(),
@@ -678,11 +749,15 @@ async function commitMove(kind,key,dwx,dwy,dropX,dropY,wp){
       // A snapped node lands on the grid, NOT under the cursor — so (like an
       // edge bend) hold the scene still on a stable OTHER node instead of
       // drop-anchoring to the release point. Record it before the re-render.
-      const holdScene = kind==='edge' || snap>0;
+      // A group move holds the scene too: no single node "follows the cursor".
+      const holdScene = kind==='edge' || snap>0 || multi;
       let anchor=null;
       if(holdScene){
-        const ref=[...zoomer.querySelectorAll('g[data-part-id]')].find(g=>g.getAttribute('data-part-id')!==key)
-                  || zoomer.querySelector('g[data-part-id]');
+        const movedSet=new Set(multi?ids:[]);
+        const ref=[...zoomer.querySelectorAll('g[data-part-id]')].find(g=>{
+          const gid=g.getAttribute('data-part-id');
+          return gid!==key && !movedSet.has(gid.replace(/~\d+$/,''));
+        }) || zoomer.querySelector('g[data-part-id]');
         if(ref){const c=ref.getBoundingClientRect();
           anchor={id:ref.getAttribute('data-part-id'),x:c.x+c.width/2,y:c.y+c.height/2};}
       }
@@ -771,6 +846,29 @@ function deletePinned(){
   pinId=null; pinCi=null;
   opCommit('delete',t);
   return true;
+}
+// deleteSelection removes every node in `ids` (the multi-selection, containers
+// already filtered out) as ONE undo step, atomically: the deletes chain on a
+// LOCAL text variable and the editor/canvas are only updated when every id
+// succeeded — a mid-batch failure discards the whole batch (and its undo
+// entry), so a partial delete can never be persisted or auto-saved.
+async function deleteSelection(ids){
+  if(!serverOK||!ids.length) return;
+  pushUndo();
+  let cur=srcEl.value, data=null;
+  try{
+    for(const id of ids){
+      const r=await fetch('/api/op?op=delete&kind=node&id='+encodeURIComponent(id)+'&format='+encodeURIComponent(LANG)+projQS(),{method:'POST',body:cur});
+      if(!r.ok){ undoStack.pop(); return; }
+      data=await r.json();
+      if(typeof data.yaml==='string') cur=data.yaml;
+    }
+  }catch(_){ undoStack.pop(); return; }
+  clearSelection(); pinId=null; pinCi=null;
+  srcEl.value=cur; setDirty(srcEl.value!==ORIGINAL);
+  try{localStorage.setItem(DRAFTKEY,srcEl.value);}catch(_){}
+  if(data&&data.svg){ updateModel(data); zoomer.innerHTML=data.svg; buildMap(); paint(null); wireHover(); wireDrag(); adaptStage(); markRendered(); }
+  showIssues((data&&data.issues)||[]);
 }
 // true when keyboard focus is in a text field (editor, detail inputs) — there
 // Backspace/Delete must edit text, never delete the selected object.
@@ -1256,13 +1354,23 @@ function wireDrag(){
       document.body.style.cursor='grabbing';  // hold feedback if pointer outruns the element
       g.classList.add('dragging');
       const did=g.getAttribute('data-part-id').replace(/~\d+$/,'');
-      // connectors docked to this node, so they can live-follow the drag
+      // Group move: pressing a node that is IN the multi-selection drags the
+      // whole selection by the same delta (committed server-side as one
+      // atomic move-multi op → one undo step). Every selected <g> live-follows.
+      const group=(selection.size>1&&selection.has(did))?[...selection]:null;
+      const set=new Set(group||[did]);
+      const els=[];
+      if(group) zoomer.querySelectorAll('g[data-part-id]').forEach(el=>{
+        if(set.has(baseId(el))) els.push({el,base:el.getAttribute('transform')||''});
+      });
+      // connectors docked to any dragged node, so they can live-follow the
+      // drag (an edge with BOTH ends in the set rides along rigidly)
       const edges=[];
       zoomer.querySelectorAll('path[data-connector]').forEach(p=>{
-        const mf=p.getAttribute('data-from')===did, mt=p.getAttribute('data-to')===did;
+        const mf=set.has(p.getAttribute('data-from')), mt=set.has(p.getAttribute('data-to'));
         if(mf||mt) edges.push({el:p,mf,mt,baseD:p.getAttribute('d')});
       });
-      nodeDrag={el:g,id:did,x:e.clientX,y:e.clientY,base:g.getAttribute('transform')||'',edges};
+      nodeDrag={el:g,id:did,ids:group,els:group?els:null,x:e.clientX,y:e.clientY,base:g.getAttribute('transform')||'',edges};
     });
     g.addEventListener('contextmenu',e=>{
       e.preventDefault(); e.stopPropagation();
@@ -1314,6 +1422,9 @@ function wireDrag(){
         base:p.getAttribute('transform')||'',baseD:p.getAttribute('d'),route,seg,wp:null};
     });
   });
+  // every re-render funnels through wireDrag — re-apply (and prune) the
+  // multi-selection highlight onto the freshly replaced SVG elements.
+  pruneSelection();
 }
 
 // showSegHandles / removeSegHandles: place small circle affordances at each
@@ -1377,12 +1488,14 @@ window.addEventListener('mousemove',e=>{
     return;
   }
   const dx=(e.clientX-d.x)/scale, dy=(e.clientY-d.y)/scale;
-  liveTranslate(d.el, d.base, dx, dy);
+  if(nodeDrag && d.els) d.els.forEach(n=>liveTranslate(n.el, n.base, dx, dy)); // group: all selected ride
+  else liveTranslate(d.el, d.base, dx, dy);
   // node drag: docked connector endpoints track the node in real time
   if(nodeDrag && d.edges) d.edges.forEach(ed=>ed.el.setAttribute('d', shiftEnds(ed.baseD, ed.mf, ed.mt, dx, dy)));
   // live drop-target feedback: highlight the group the node would land in, so
   // it's obvious BEFORE releasing whether the re-home was recognised.
-  if(nodeDrag) highlightDropTarget(containerUnder(e.clientX,e.clientY,d.id));
+  // (single drags only — a group move keeps every node's current parent)
+  if(nodeDrag && !d.ids) highlightDropTarget(containerUnder(e.clientX,e.clientY,d.id));
 });
 // Mark one group slab as the active drop target (clears any previous one).
 let dropTargetId=null;
@@ -1401,7 +1514,8 @@ window.addEventListener('mouseup',e=>{
   if(!kind) return;
   nodeDrag=null; edgeDrag=null;
   // restore the pre-drag transform; commit re-renders the SVG fresh
-  d.el.setAttribute('transform', d.base);
+  if(d.els) d.els.forEach(n=>n.el.setAttribute('transform', n.base));
+  else d.el.setAttribute('transform', d.base);
   if(d.baseD!=null) d.el.setAttribute('d', d.baseD);
   // restore live-followed edges; the commit re-render replaces them cleanly,
   // and a below-threshold release leaves nothing changed.
@@ -1414,6 +1528,11 @@ window.addEventListener('mouseup',e=>{
     // interior corners (drop the docked endpoints) become the waypoint list
     const interior=d.wp.slice(1,d.wp.length-1).map(w=>[Math.round(w.wx),Math.round(w.wy)]);
     commitMove('edge', d.ci, 0, 0, e.clientX, e.clientY, interior);
+  }else if(kind==='node' && d.ids){
+    // Group move: ONE atomic server round-trip moves the whole selection by
+    // the same delta (relative positions preserved) = ONE undo step. No
+    // reparent pass — every node keeps its current container.
+    commitMove(kind, d.id, Math.round(wd[0]), Math.round(wd[1]), e.clientX, e.clientY, null, d.ids);
   }else if(kind==='node'){
     // Position first, then re-home: drop onto a group's slab joins it; drop on
     // bare canvas returns it to the scene root. The server no-ops the reparent
@@ -1555,13 +1674,65 @@ viewport.addEventListener('wheel',e=>{
   panX=mx-(mx-panX)*f; panY=my-(my-panY)*f;
   scale=Math.min(8,Math.max(0.2,scale*f)); apply();
 },{passive:false});
-let drag=null;
-viewport.addEventListener('mousedown',e=>{drag={x:e.clientX-panX,y:e.clientY-panY};viewport.classList.add('panning');});
+/* ── empty-canvas gestures ─────────────────────────────────────────
+   plain left-drag  = marquee box selection (semi-transparent frame; a node
+                      is hit when its projected model AABB intersects the box;
+                      hold shift to ADD to the current selection)
+   alt/middle-drag  = pan (the old plain-drag pan, kept on a modifier)
+   plain click      = clear pin + selection · double-click = reset view
+   Node/edge/handle mousedowns stopPropagation, so these fire on bare canvas only. */
+let drag=null, marquee=null, marqueeJustEnded=false;
+viewport.addEventListener('mousedown',e=>{
+  if(e.button===0 && !e.altKey){
+    marquee={x0:e.clientX,y0:e.clientY,el:null,rect:null,add:e.shiftKey};
+    e.preventDefault();
+    return;
+  }
+  if(e.button!==0 && e.button!==1) return;
+  e.preventDefault();
+  drag={x:e.clientX-panX,y:e.clientY-panY};viewport.classList.add('panning');
+});
 window.addEventListener('mousemove',e=>{if(!drag)return;panX=e.clientX-drag.x;panY=e.clientY-drag.y;apply();});
 window.addEventListener('mouseup',()=>{drag=null;viewport.classList.remove('panning');});
+window.addEventListener('mousemove',e=>{
+  if(!marquee) return;
+  if(!marquee.el){
+    // below 4px it's still a click; don't flash a 1px box on every click
+    if(Math.abs(e.clientX-marquee.x0)<4 && Math.abs(e.clientY-marquee.y0)<4) return;
+    const el=document.createElement('div');
+    el.className='marquee';
+    viewport.appendChild(el);
+    marquee.el=el;
+  }
+  const r={left:Math.min(marquee.x0,e.clientX), top:Math.min(marquee.y0,e.clientY),
+           right:Math.max(marquee.x0,e.clientX), bottom:Math.max(marquee.y0,e.clientY)};
+  marquee.rect=r;
+  const vp=viewport.getBoundingClientRect();
+  marquee.el.style.left=(r.left-vp.left)+'px';
+  marquee.el.style.top=(r.top-vp.top)+'px';
+  marquee.el.style.width=(r.right-r.left)+'px';
+  marquee.el.style.height=(r.bottom-r.top)+'px';
+  // live preview: highlight what a release right now would select
+  const hits=new Set(marqueeHits(r));
+  if(marquee.add) for(const id of selection) hits.add(id);
+  zoomer.querySelectorAll('g[data-part-id]').forEach(g=>g.classList.toggle('sel',hits.has(baseId(g))));
+});
+window.addEventListener('mouseup',e=>{
+  if(!marquee) return;
+  const mq=marquee; marquee=null;
+  if(!mq.el) return;               // no box drawn → plain click; the click handler clears
+  mq.el.remove();
+  const hits=marqueeHits(mq.rect);
+  if(mq.add) hits.forEach(id=>selection.add(id));
+  else selection=new Set(hits);
+  applySelectionClasses();
+  marqueeJustEnded=true;           // the trailing click must not clear what we just selected
+});
 viewport.addEventListener('dblclick',resetView);
 viewport.addEventListener('click',e=>{
   if(e.target.closest && e.target.closest('g[data-part-id]')) return;
+  if(marqueeJustEnded){marqueeJustEnded=false;return;}
+  clearSelection();
   if(pinId!==null||pinCi!==null){pinId=null;pinCi=null;glowOnly(null);glowEdge(null);paint(null);}
 });
 // Right-click the empty canvas → edit the whole-image background/grid. Node
@@ -1778,11 +1949,16 @@ window.addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&e.key==='0'){e.preventDefault();fitView();return;}
   if((e.metaKey||e.ctrlKey)&&(e.key==='='||e.key==='+')){e.preventDefault();zoomBy(1.25);return;}
   if((e.metaKey||e.ctrlKey)&&e.key==='-'){e.preventDefault();zoomBy(0.8);return;}
-  if(e.key==='Escape'){document.getElementById('help').hidden=true;hideCtx();closeDetail();return;}
-  // Delete / Backspace removes the pinned object — but only when not typing in a
-  // text field and no modal is open, so it never eats a backspace mid-edit.
-  if((e.key==='Delete'||e.key==='Backspace')&&!inEditable()&&detailModal.hidden&&(pinId||pinCi!=null)){
-    if(deletePinned()){ e.preventDefault(); return; }
+  if(e.key==='Escape'){document.getElementById('help').hidden=true;hideCtx();closeDetail();clearSelection();return;}
+  // Delete / Backspace removes the multi-selection (one atomic batch = one
+  // undo step) when there is one, else the pinned object — but only when not
+  // typing in a text field and no modal is open, so it never eats a backspace.
+  if((e.key==='Delete'||e.key==='Backspace')&&!inEditable()&&detailModal.hidden){
+    if(selection.size>0){
+      const ids=[...selection].filter(id=>!isContainerId(id));
+      if(ids.length){ e.preventDefault(); deleteSelection(ids); return; }
+    }
+    if((pinId||pinCi!=null)&&deletePinned()){ e.preventDefault(); return; }
   }
   if(e.key==='?'&&document.activeElement!==srcEl){toggleHelp();}
 });
