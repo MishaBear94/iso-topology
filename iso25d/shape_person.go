@@ -37,6 +37,30 @@ type IsoPersonOpts struct {
 	Opacity         float64
 	StrokeDasharray string
 	Background      string
+
+	// Body gradients (style.palette wiring): LeftGradient/RightGradient map
+	// onto the matching dome halves; a topGradient is applied to BOTH halves
+	// (the dome has no drawn top face, so "top gradient" reads as "body
+	// gradient"). Non-nil overrides the matching solid Body* fill.
+	BodyLeftGradient, BodyRightGradient *FaceGradient
+
+	// Silhouette accent ring (effects.outline) — same semantics as the box
+	// family: an emphasis ring traced along the figure's TRUE outer
+	// silhouette (head crown fused onto the dome), painted on top.
+	OutlineColor   string
+	OutlineWidth   float64
+	OutlineDash    string
+	OutlineOpacity float64
+
+	// Drop shadow filter (effects.dropShadow). Empty color = disabled,
+	// matching emitBoxDefs' gate on the box path.
+	ShadowDx, ShadowDy, ShadowBlur float64
+	ShadowColor                    string
+
+	// Diffuse halo behind the silhouette (effects.backglow).
+	BackglowColor   string
+	BackglowRadius  float64
+	BackglowOpacity float64
 }
 
 func DefaultIsoPerson() IsoPersonOpts {
@@ -128,13 +152,58 @@ func RenderIsoPerson(o IsoPersonOpts) string {
 
 	var sb strings.Builder
 	sb.WriteString(svgHeader(W, H))
-	openWrapper(&sb, W, H, o.Background, o.Opacity, o.StrokeDasharray, "")
 
-	// Defs: radial gradient for the sphere head.
+	// Effects silhouette (backglow halo + outline ring both trace it) —
+	// sampled lazily so the no-effects render is byte-identical to before.
+	var silPts [][2]float64
+	silhouette := func() [][2]float64 {
+		if silPts == nil {
+			silPts = personFigureSilhouette(rx, ry, h, headR, headCy, o.HeadStyle)
+			for k := range silPts {
+				silPts[k][0] = sx(silPts[k][0])
+				silPts[k][1] = sy(silPts[k][1])
+			}
+		}
+		return silPts
+	}
+
+	// Pre-wrapper effects, matching the box path's conventions: the drop
+	// shadow filter def is referenced by the wrapper <g>; the backglow halo
+	// paints beneath everything so part opacity doesn't dim it.
+	shadowID := ""
+	var preDefs strings.Builder
+	if strings.TrimSpace(o.ShadowColor) != "" && (o.ShadowDx != 0 || o.ShadowDy != 0 || o.ShadowBlur > 0) {
+		shadowID = "person-shadow"
+		emitDropShadowFilter(&preDefs, shadowID, o.ShadowDx, o.ShadowDy, o.ShadowBlur, o.ShadowColor)
+	}
+	var halo strings.Builder
+	if strings.TrimSpace(o.BackglowColor) != "" && o.BackglowRadius > 0 {
+		emitBackglowHalo(&halo, &preDefs, "person-backglow", o.BackglowColor, o.BackglowRadius, o.BackglowOpacity, silhouette())
+	}
+	if preDefs.Len() > 0 {
+		fmt.Fprintf(&sb, `<defs>%s</defs>`, preDefs.String())
+	}
+	sb.WriteString(halo.String())
+
+	openWrapper(&sb, W, H, o.Background, o.Opacity, o.StrokeDasharray, shadowID)
+
+	// Body fills: a per-half linear gradient outranks the solid fill.
+	leftFill, rightFill := o.BodyLeft, o.BodyRight
+	var bodyGradDefs strings.Builder
+	if o.BodyLeftGradient != nil {
+		emitLinearGradient(&bodyGradDefs, "person-body-left-grad", o.BodyLeftGradient)
+		leftFill = "url(#person-body-left-grad)"
+	}
+	if o.BodyRightGradient != nil {
+		emitLinearGradient(&bodyGradDefs, "person-body-right-grad", o.BodyRightGradient)
+		rightFill = "url(#person-body-right-grad)"
+	}
+
+	// Defs: radial gradient for the sphere head (+ optional body gradients).
 	gradID := "person-head-grad"
 	fmt.Fprintf(&sb,
-		`<defs><radialGradient id="%s" cx="35%%" cy="30%%" r="75%%"><stop offset="0%%" stop-color="%s"/><stop offset="100%%" stop-color="%s"/></radialGradient></defs>`,
-		gradID, escapeAttr(o.HeadHighlight), escapeAttr(o.HeadShadow),
+		`<defs><radialGradient id="%s" cx="35%%" cy="30%%" r="75%%"><stop offset="0%%" stop-color="%s"/><stop offset="100%%" stop-color="%s"/></radialGradient>%s</defs>`,
+		gradID, escapeAttr(o.HeadHighlight), escapeAttr(o.HeadShadow), bodyGradDefs.String(),
 	)
 
 	// Key silhouette points in screen space.
@@ -169,14 +238,14 @@ func RenderIsoPerson(o IsoPersonOpts) string {
 		apex[0], apex[1],
 		rx, h, groundL[0], groundL[1], // dome arc apex → groundL
 		rx, ry, groundF[0], groundF[1], // ground front-arc groundL → groundF (sweep=0)
-		escapeAttr(o.BodyLeft),
+		escapeAttr(leftFill),
 	)
 	fmt.Fprintf(&sb,
 		`<path data-face="body-right" d="M %.2f %.2f A %.2f %.2f 0 0 1 %.2f %.2f A %.2f %.2f 0 0 1 %.2f %.2f Z" fill="%s" stroke="none"/>`,
 		apex[0], apex[1],
 		rx, h, groundR[0], groundR[1], // dome arc apex → groundR
 		rx, ry, groundF[0], groundF[1], // ground front-arc groundR → groundF (sweep=1)
-		escapeAttr(o.BodyRight),
+		escapeAttr(rightFill),
 	)
 
 	// Subtle iso "ridge" — vertical hairline from apex to front-touch,
@@ -237,9 +306,104 @@ func RenderIsoPerson(o IsoPersonOpts) string {
 		)
 	}
 
+	// effects.outline — accent ring along the figure's true silhouette,
+	// painted on top of the faces like every other shape's outline.
+	if o.OutlineColor != "" && o.OutlineWidth > 0 {
+		emitOutlineRing(&sb, silhouette(), o.OutlineColor, o.OutlineWidth, o.OutlineDash, o.OutlineOpacity)
+	}
+
 	closeWrapper(&sb)
 	sb.WriteString(`</svg>`)
 	return sb.String()
+}
+
+// personFigureSilhouette samples the figure's outer silhouette — the sphere
+// head crown fused onto the dome torso — as a closed polyline in the local
+// dome frame (apex at (0, 0), ground-ellipse centre at (0, h), +y down).
+// Feeds emitBackglowHalo / emitOutlineRing, mirroring how the box family
+// feeds its provider silhouette into the same emitters.
+//
+// The head↔dome fusion points are the exact circle∩ellipse intersections:
+// substituting x² = headR² − (y−hc)² into the dome ellipse
+// x²/rx² + (y−h)²/h² = 1 yields a quadratic in y —
+//
+//	(rx²−h²)·y² + 2(h²·hc − rx²·h)·y + h²(headR² − hc²) = 0
+//
+// — whose in-range root (smallest y with a real x) is where the crown meets
+// the dome, so the ring hugs the neck seam with no notch. Falls back to the
+// body-only silhouette when the head doesn't intersect the dome (oversized
+// heads) or for the legacy "block" head style.
+func personFigureSilhouette(rx, ry, h, headR, headCy float64, headStyle string) [][2]float64 {
+	const (
+		nCrown  = 24
+		nDome   = 12
+		nGround = 16
+	)
+	var pts [][2]float64
+	add := func(x, y float64) { pts = append(pts, [2]float64{x, y}) }
+
+	// Head∩dome fusion point (sphere head only).
+	xi, yi := 0.0, 0.0
+	haveHead := false
+	if headStyle != "block" && headR > 0 && rx > 0 && h > 0 {
+		hc := headCy
+		qa := rx*rx - h*h
+		qb := 2 * (h*h*hc - rx*rx*h)
+		qc := h * h * (headR*headR - hc*hc)
+		var cands []float64
+		if math.Abs(qa) < 1e-9 {
+			if qb != 0 {
+				cands = append(cands, -qc/qb)
+			}
+		} else if disc := qb*qb - 4*qa*qc; disc >= 0 {
+			s := math.Sqrt(disc)
+			cands = append(cands, (-qb-s)/(2*qa), (-qb+s)/(2*qa))
+		}
+		best := math.Inf(1)
+		for _, y := range cands {
+			x2 := headR*headR - (y-hc)*(y-hc)
+			if x2 <= 0 || y < hc || y > h {
+				continue
+			}
+			if y < best {
+				best = y
+				xi, yi = math.Sqrt(x2), y
+				haveHead = true
+			}
+		}
+	}
+
+	if haveHead {
+		// Crown: left fusion point, over the top of the head, to the right one.
+		aL := math.Atan2(yi-headCy, -xi)
+		aR := math.Atan2(yi-headCy, xi) + 2*math.Pi
+		for i := 0; i <= nCrown; i++ {
+			a := aL + (aR-aL)*float64(i)/float64(nCrown)
+			add(headR*math.Cos(a), headCy+headR*math.Sin(a))
+		}
+	}
+	// Dome right flank: fusion point (or apex) down to ground-right. The dome
+	// arc is the ellipse centred at (0, h) with radii (rx, h): φ=0 at the
+	// apex, φ=π/2 at ground-right.
+	phi0 := 0.0
+	if haveHead {
+		phi0 = math.Atan2(xi/rx, (h-yi)/h)
+	}
+	for i := 0; i <= nDome; i++ {
+		phi := phi0 + (math.Pi/2-phi0)*float64(i)/float64(nDome)
+		add(rx*math.Sin(phi), h-h*math.Cos(phi))
+	}
+	// Ground front arc: ground-right through the front touch to ground-left.
+	for i := 1; i <= nGround; i++ {
+		t := math.Pi * float64(i) / float64(nGround)
+		add(rx*math.Cos(t), h+ry*math.Sin(t))
+	}
+	// Dome left flank: ground-left back up to the fusion point (or apex).
+	for i := 1; i <= nDome; i++ {
+		phi := math.Pi/2 - (math.Pi/2-phi0)*float64(i)/float64(nDome)
+		add(-rx*math.Sin(phi), h-h*math.Cos(phi))
+	}
+	return pts
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +467,28 @@ func applyPerson(o ConvertOpts, p *IsoPersonOpts) {
 	if o.Background != "" {
 		p.Background = o.Background
 	}
+	// Body gradients: left/rightGradient map onto the matching dome halves;
+	// topGradient is the whole-body fallback for any half without its own
+	// gradient (the dome draws no top face for it to land on).
+	if o.LeftGradient != nil {
+		p.BodyLeftGradient = o.LeftGradient
+	}
+	if o.RightGradient != nil {
+		p.BodyRightGradient = o.RightGradient
+	}
+	if o.TopGradient != nil {
+		if p.BodyLeftGradient == nil {
+			p.BodyLeftGradient = o.TopGradient
+		}
+		if p.BodyRightGradient == nil {
+			p.BodyRightGradient = o.TopGradient
+		}
+	}
+	// Silhouette effects — same field semantics as applyBox.
+	p.OutlineColor, p.OutlineWidth = o.OutlineColor, o.OutlineWidth
+	p.OutlineDash, p.OutlineOpacity = o.OutlineDash, o.OutlineOpacity
+	p.ShadowDx, p.ShadowDy, p.ShadowBlur, p.ShadowColor = o.ShadowDx, o.ShadowDy, o.ShadowBlur, o.ShadowColor
+	p.BackglowColor, p.BackglowRadius, p.BackglowOpacity = o.BackglowColor, o.BackglowRadius, o.BackglowOpacity
 }
 
 // PersonShapeProvider — geometry-only (M2.2): the true outline so

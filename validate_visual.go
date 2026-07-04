@@ -204,10 +204,14 @@ func textColor(st *Style) string {
 	return "#1E293B"
 }
 
-// faceSplitIssues warns when effects.faceSplit is enabled but cannot take
-// effect, so the flag is never a silent no-op. It applies only to the rounded
-// box family (needs cornerRadius>0): on a sharp box the faces already shade
-// independently, and a non-box shape ignores it entirely.
+// faceSplitIssues warns when a style flag is set that the target shape will
+// silently drop, so no styling is a silent no-op:
+//
+//   - effects.faceSplit applies only to the rounded box family (needs
+//     cornerRadius>0): a sharp box already shades its faces independently,
+//     and a non-box shape ignores it entirely.
+//   - style.faces / effects.pattern on a person: the person renderer has no
+//     face polygons / top face for them — use palette (+ gradients) instead.
 func faceSplitIssues(doc *Document) []Issue {
 	if doc == nil {
 		return nil
@@ -243,12 +247,44 @@ func faceSplitIssues(doc *Document) []Issue {
 						})
 					}
 				}
+				// person style-support lint rides the same "unsupported style
+				// on shape" pass. The person renderer takes palette fills /
+				// gradients and the silhouette effects (outline / dropShadow /
+				// backglow), but has no face polygons for style.faces or a top
+				// face for effects.pattern — both are silently dropped, so an
+				// author who styled a person that way should hear about it.
+				if isPersonShape(p.Shape) && eff != nil {
+					if len(eff.Faces) > 0 {
+						issues = append(issues, Issue{
+							Severity: SeverityWarning,
+							Path:     pPath + ".style.faces",
+							Message:  fmt.Sprintf("style.faces is ignored on shape %q — style the body with palette.left/right (or leftGradient/rightGradient; topGradient shades both halves)", p.Shape),
+						})
+					}
+					if eff.Effects != nil && eff.Effects.Pattern != nil && eff.Effects.Pattern.Kind != "" {
+						issues = append(issues, Issue{
+							Severity: SeverityWarning,
+							Path:     pPath + ".style.effects.pattern",
+							Message:  fmt.Sprintf("effects.pattern is not supported on shape %q (no top face to tile) and is ignored", p.Shape),
+						})
+					}
+				}
 				walk(p.Parts, pPath)
 			}
 		}
 		walk(n.Parts, prefix)
 	}
 	return issues
+}
+
+// isPersonShape reports whether a shape name lowers to the person renderer
+// (mirrors the alias set in translate.go / fields.go).
+func isPersonShape(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "person", "c4-person", "c4_person":
+		return true
+	}
+	return false
 }
 
 // ── 1. VisualContrastIssues ───────────────────────────────────────────────────
@@ -303,7 +339,21 @@ func VisualContrastIssues(doc *Document) []Issue {
 					// other), and escalate a near-invisible result to an error:
 					// such a label is gone in the render, not merely cramped.
 					txt := textColor(eff)
-					if txtLum, ok := lumOf(txt); ok && p.Label != "" {
+					if txtLum, ok := lumOf(txt); ok && p.Label != "" && isPersonShape(p.Shape) {
+						// A person's label renders in SCREEN SPACE below the
+						// figure — never on a face — so the readable pairing
+						// is text vs the CANVAS, not text vs the body fill
+						// (same reasoning as the iso_text exemption in (b)).
+						if bgOK {
+							if cr := contrastRatio(bgLum, txtLum); cr < 3.0 {
+								issues = append(issues, Issue{
+									Severity: SeverityWarning,
+									Path:     pPath + ".style.text.color",
+									Message:  fmt.Sprintf("low contrast between canvas background %s and person label text %s (ratio %.2f < 3.0) — person labels render on the canvas below the figure", canvasBg, txt, cr),
+								})
+							}
+						}
+					} else if ok && p.Label != "" {
 						// Track the worst stop (for the warning) AND the best (for
 						// the error). A gradient is flagged if ANY stop is low
 						// contrast, but only escalated to an error when EVEN ITS

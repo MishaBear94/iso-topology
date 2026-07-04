@@ -202,6 +202,7 @@ func buildShapeCaps() []ShapeCap {
 	}
 	notes := map[string]string{
 		"composite": "container — holds parts: [] of CompositePart entries",
+		"person":    "human actor: sphere head fused onto a dome torso. Body halves take palette.left/right; palette.leftGradient/rightGradient shade the matching half, palette.topGradient shades BOTH halves as one body gradient (no drawn top face). effects.outline / dropShadow / backglow follow the true head+dome silhouette. style.faces and effects.pattern are ignored (validator warns)",
 		"group":     "v2 primitive — translucent labeled substrate wrapping nested parts",
 		"boundary":  "v3.5 — a group whose substrate is a dashed OUTLINE-ONLY flat region (VPC / subnet / trust zone). Same nesting/layout/autosize as group; style.stroke restyles the dashes",
 		"iso_text":  "flat text panel (low extrusion)",

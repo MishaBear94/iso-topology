@@ -1,0 +1,47 @@
+# person-effects — the person shape speaking the box family's style
+# vocabulary: a body gradient (topGradient shades both dome halves; left/
+# rightGradient address one half each), a silhouette outline ring, a drop
+# shadow, and a backglow halo — all hugging the true head+dome outline.
+#
+# Colour discipline: the golden must be reproducible by the documented
+# `isotopo render` CLI, whose default repair loop retints any label below
+# 3.0 contrast against its worst body-fill stop. Every label here clears
+# 3.0 against BOTH the canvas (what the validator checks — person labels
+# render screen-space on the canvas) and every gradient stop, so repair is
+# a strict no-op (pinned by TestPersonEffectsSampleIsRepairFixpoint).
+canvas:
+  background: "#F2F5FA"
+  grid: iso
+  gridColor: "#E3E9F2"
+  gridStep: 40
+  padding: 48
+
+nodes:
+  scene:
+    shape: composite
+    parts:
+      - id: operator
+        shape: person
+        label: "Operator"
+        geom: { w: 120, d: 120, h: 56 }
+        style:
+          palette:
+            topGradient: { from: "#6FA8E8", to: "#4A79B8", dir: "down" }
+          text: { color: "#12233D" }
+          effects:
+            outline: { color: "#1F4C86", width: 2, dash: "5 3", opacity: 0.85 }
+            dropShadow: { dx: 4, dy: 6, blur: 5, color: "#8FA3BF" }
+
+      - id: admin
+        shape: person
+        label: "Admin"
+        place: { rightOf: operator, gap: 2 }
+        geom: { w: 104, d: 104, h: 48 }
+        style:
+          palette:
+            top: "#FFD9B0"
+            leftGradient:  { from: "#FFC98A", to: "#B86A2B", dir: "down" }
+            rightGradient: { from: "#FFB66A", to: "#8F4E1D", dir: "down" }
+          text: { color: "#4A2E14" }
+          effects:
+            backglow: { color: "#FFAA55", radius: 26, opacity: 0.5 }
