@@ -3,6 +3,7 @@ package isotopo
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/MarkovWangRR/iso-topology/iso25d"
@@ -203,10 +204,14 @@ func textColor(st *Style) string {
 	return "#1E293B"
 }
 
-// faceSplitIssues warns when effects.faceSplit is enabled but cannot take
-// effect, so the flag is never a silent no-op. It applies only to the rounded
-// box family (needs cornerRadius>0): on a sharp box the faces already shade
-// independently, and a non-box shape ignores it entirely.
+// faceSplitIssues warns when a style flag is set that the target shape will
+// silently drop, so no styling is a silent no-op:
+//
+//   - effects.faceSplit applies only to the rounded box family (needs
+//     cornerRadius>0): a sharp box already shades its faces independently,
+//     and a non-box shape ignores it entirely.
+//   - style.faces / effects.pattern on a person: the person renderer has no
+//     face polygons / top face for them — use palette (+ gradients) instead.
 func faceSplitIssues(doc *Document) []Issue {
 	if doc == nil {
 		return nil
@@ -242,12 +247,44 @@ func faceSplitIssues(doc *Document) []Issue {
 						})
 					}
 				}
+				// person style-support lint rides the same "unsupported style
+				// on shape" pass. The person renderer takes palette fills /
+				// gradients and the silhouette effects (outline / dropShadow /
+				// backglow), but has no face polygons for style.faces or a top
+				// face for effects.pattern — both are silently dropped, so an
+				// author who styled a person that way should hear about it.
+				if isPersonShape(p.Shape) && eff != nil {
+					if len(eff.Faces) > 0 {
+						issues = append(issues, Issue{
+							Severity: SeverityWarning,
+							Path:     pPath + ".style.faces",
+							Message:  fmt.Sprintf("style.faces is ignored on shape %q — style the body with palette.left/right (or leftGradient/rightGradient; topGradient shades both halves)", p.Shape),
+						})
+					}
+					if eff.Effects != nil && eff.Effects.Pattern != nil && eff.Effects.Pattern.Kind != "" {
+						issues = append(issues, Issue{
+							Severity: SeverityWarning,
+							Path:     pPath + ".style.effects.pattern",
+							Message:  fmt.Sprintf("effects.pattern is not supported on shape %q (no top face to tile) and is ignored", p.Shape),
+						})
+					}
+				}
 				walk(p.Parts, pPath)
 			}
 		}
 		walk(n.Parts, prefix)
 	}
 	return issues
+}
+
+// isPersonShape reports whether a shape name lowers to the person renderer
+// (mirrors the alias set in translate.go / fields.go).
+func isPersonShape(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "person", "c4-person", "c4_person":
+		return true
+	}
+	return false
 }
 
 // ── 1. VisualContrastIssues ───────────────────────────────────────────────────
@@ -258,6 +295,9 @@ func faceSplitIssues(doc *Document) []Issue {
 //   - top face fill vs canvas background (< 1.5 → warning)
 //   - group/boundary top fill vs direct child top fill (< 1.3 → warning)
 //   - iso:// icon with default ink on a dark top fill (luminance < 0.18, no /light or /RRGGBB suffix → warning)
+//
+// It also appends cloudFaceIssues — the cloud-specific "right face is dropped"
+// lint — so cloud styling feedback rides the same wired entry point.
 func VisualContrastIssues(doc *Document) []Issue {
 	if doc == nil {
 		return nil
@@ -299,7 +339,21 @@ func VisualContrastIssues(doc *Document) []Issue {
 					// other), and escalate a near-invisible result to an error:
 					// such a label is gone in the render, not merely cramped.
 					txt := textColor(eff)
-					if txtLum, ok := lumOf(txt); ok && p.Label != "" {
+					if txtLum, ok := lumOf(txt); ok && p.Label != "" && isPersonShape(p.Shape) {
+						// A person's label renders in SCREEN SPACE below the
+						// figure — never on a face — so the readable pairing
+						// is text vs the CANVAS, not text vs the body fill
+						// (same reasoning as the iso_text exemption in (b)).
+						if bgOK {
+							if cr := contrastRatio(bgLum, txtLum); cr < 3.0 {
+								issues = append(issues, Issue{
+									Severity: SeverityWarning,
+									Path:     pPath + ".style.text.color",
+									Message:  fmt.Sprintf("low contrast between canvas background %s and person label text %s (ratio %.2f < 3.0) — person labels render on the canvas below the figure", canvasBg, txt, cr),
+								})
+							}
+						}
+					} else if ok && p.Label != "" {
 						// Track the worst stop (for the warning) AND the best (for
 						// the error). A gradient is flagged if ANY stop is low
 						// contrast, but only escalated to an error when EVEN ITS
@@ -410,6 +464,69 @@ func VisualContrastIssues(doc *Document) []Issue {
 		}
 		walkContrast(n.Parts, prefix)
 	}
+	issues = append(issues, cloudFaceIssues(doc)...)
+	return issues
+}
+
+// cloudFaceIssues warns when a cloud part's OWN style sets a right-face colour
+// (palette.right or palette.rightGradient). The cloud renders exactly two
+// surfaces — the crown (palette.top / topGradient) and one wrap-around side
+// band (palette.left / leftGradient); there is no discrete right face, so a
+// right value is silently dropped by the renderer. Only the node's own style
+// is read (not the theme-resolved one): a theme-wide palette legitimately
+// carries `right` for the box family, and flagging every themed cloud for it
+// would be noise, whereas a right colour written on the cloud itself is an
+// authoring mistake worth surfacing.
+func cloudFaceIssues(doc *Document) []Issue {
+	if doc == nil {
+		return nil
+	}
+	var issues []Issue
+	nodeIDs := make([]string, 0, len(doc.Nodes))
+	for id := range doc.Nodes {
+		nodeIDs = append(nodeIDs, id)
+	}
+	sort.Strings(nodeIDs) // stable issue order regardless of map iteration
+	for _, nodeID := range nodeIDs {
+		n := doc.Nodes[nodeID]
+		if n == nil {
+			continue
+		}
+		prefix := fmt.Sprintf("nodes.%s", nodeID)
+		var walk func(parts []*CompositePart, pathPrefix string)
+		walk = func(parts []*CompositePart, pathPrefix string) {
+			for _, p := range parts {
+				if p == nil {
+					continue
+				}
+				pPath := fmt.Sprintf("%s.parts[%s]", pathPrefix, p.ID)
+				if p.ID == "" {
+					pPath = pathPrefix + ".parts[?]"
+				}
+				if p.Shape == "cloud" && p.Style != nil && p.Style.Palette != nil {
+					pal := p.Style.Palette
+					if pal.Right != "" {
+						issues = append(issues, Issue{
+							Severity: SeverityWarning,
+							Path:     pPath + ".style.palette.right",
+							Message:  fmt.Sprintf("palette.right %q is ignored on a cloud — it renders only a top crown and one wrap-around side band (palette.top/left, topGradient/leftGradient). Move the colour into palette.left or a leftGradient.", pal.Right),
+							Suggest:  "move the colour into palette.left / leftGradient",
+						})
+					}
+					if g := pal.RightGradient; g != nil && (g.From != "" || g.To != "") {
+						issues = append(issues, Issue{
+							Severity: SeverityWarning,
+							Path:     pPath + ".style.palette.rightGradient",
+							Message:  "palette.rightGradient is ignored on a cloud — it renders only a top crown and one wrap-around side band (palette.top/left, topGradient/leftGradient). Use leftGradient for the side band.",
+							Suggest:  "use palette.leftGradient for the cloud's side band",
+						})
+					}
+				}
+				walk(p.Parts, pPath)
+			}
+		}
+		walk(n.Parts, prefix)
+	}
 	return issues
 }
 
@@ -449,7 +566,9 @@ func labelIssues(doc *Document) []Issue {
 
 					// Item 2: truncation risk
 					if p.Geom != nil && p.Geom.W > 0 {
-						estPx := len(p.Label) * 7
+						// Rune-aware estimate — byte counting inflated
+						// CJK labels ~3× (3 bytes per ideograph).
+						estPx := estimateLabelPx(p.Label)
 						availPx := int(p.Geom.W * 40 * 0.9 * 0.95)
 						if estPx > availPx {
 							issues = append(issues, Issue{

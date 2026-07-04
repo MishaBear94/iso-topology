@@ -163,13 +163,84 @@ func RenderComposite(parts []CompositePart) string {
 // "rounded-side"); concatenating N parts verbatim made every part
 // resolve url(#...) against the FIRST part's defs — document-wide id
 // collision, so e.g. every rounded part inherited part 0's side fill
-// regardless of its own palette. Standalone part SVGs only ever use
-// ids for their own defs, so a blanket prefix is safe.
+// regardless of its own palette.
+//
+// The rewrite is applied ONLY inside element open/close tags (attribute
+// context). Text nodes, comments, and CDATA sections are copied verbatim:
+// a label whose text happens to contain `id="`, `url(#`, or `href="#`
+// (quotes and parens survive escapeXML untouched) must not have the part
+// prefix spliced into what the user reads. Within a tag the blanket
+// replace stays safe because attribute values cannot contain a raw `"`.
 func namespaceSVGIDs(inner, prefix string) string {
-	inner = strings.ReplaceAll(inner, `id="`, `id="`+prefix)
-	inner = strings.ReplaceAll(inner, `url(#`, `url(#`+prefix)
-	inner = strings.ReplaceAll(inner, `href="#`, `href="#`+prefix)
-	return inner
+	var sb strings.Builder
+	sb.Grow(len(inner) + 16*len(prefix))
+	i := 0
+	for i < len(inner) {
+		lt := strings.IndexByte(inner[i:], '<')
+		if lt < 0 {
+			sb.WriteString(inner[i:]) // trailing text node — verbatim
+			break
+		}
+		lt += i
+		sb.WriteString(inner[i:lt]) // text node — verbatim
+		// Comments and CDATA are opaque character data: copy verbatim.
+		if strings.HasPrefix(inner[lt:], "<!--") {
+			end := strings.Index(inner[lt:], "-->")
+			if end < 0 {
+				sb.WriteString(inner[lt:])
+				break
+			}
+			sb.WriteString(inner[lt : lt+end+len("-->")])
+			i = lt + end + len("-->")
+			continue
+		}
+		if strings.HasPrefix(inner[lt:], "<![CDATA[") {
+			end := strings.Index(inner[lt:], "]]>")
+			if end < 0 {
+				sb.WriteString(inner[lt:])
+				break
+			}
+			sb.WriteString(inner[lt : lt+end+len("]]>")])
+			i = lt + end + len("]]>")
+			continue
+		}
+		end := tagCloseIndex(inner, lt)
+		if end < 0 {
+			// Unterminated tag — nothing downstream is safely rewritable.
+			sb.WriteString(inner[lt:])
+			break
+		}
+		tag := inner[lt : end+1]
+		tag = strings.ReplaceAll(tag, `id="`, `id="`+prefix)
+		tag = strings.ReplaceAll(tag, `url(#`, `url(#`+prefix)
+		tag = strings.ReplaceAll(tag, `href="#`, `href="#`+prefix)
+		sb.WriteString(tag)
+		i = end + 1
+	}
+	return sb.String()
+}
+
+// tagCloseIndex returns the index of the '>' closing the tag opened at
+// s[lt] == '<', honouring quoted attribute values so a '>' inside an
+// attribute cannot end the tag early. Returns -1 when the tag never closes.
+func tagCloseIndex(s string, lt int) int {
+	var quote byte
+	for i := lt + 1; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '"', '\'':
+			quote = c
+		case '>':
+			return i
+		}
+	}
+	return -1
 }
 
 // PartOriginOffset returns the (tx, ty) within a part's standalone SVG

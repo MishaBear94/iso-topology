@@ -33,18 +33,18 @@ override per-part via `geom.h`.
 | **array3d** | `array3d` | 1.0 | v3.11 — N×M×K volumetric grid. params: countX, countY, countZ (default 3×3×3), gap. Semantic: GPU cluster, tensor, embedding matrix. |
 | **boundary** | `boundary` | 1.0 | v3.5 — a group whose substrate is a dashed OUTLINE-ONLY flat region (VPC / subnet / trust zone). Same nesting/layout/autosize as group; style.stroke restyles the dashes |
 | **circle** | `circle`, `oval` | 1.0 |  |
-| **cloud** | `cloud` | 0.8 | free-form rounded outline; no per-face palette overrides |
+| **cloud** | `cloud` | 0.8 | free-form rounded outline; styles via palette top/left (+ topGradient/leftGradient) — top paints the crown, left the wrap-around side band; right is unused (no right face, linted). Top-face icon + label supported with box-family anchor/scale semantics on the cloud's inscribed content rect |
 | **composite** | `composite` | 1.0 | container — holds parts: [] of CompositePart entries |
 | **custom_path** | `custom_path` | 1.0 | v3.10 — arbitrary polygon base extruded vertically. Provide path: in geom.params (M/L/Z SVG commands). Semantic: any brand or domain-specific shape. |
 | **cylinder** | `cylinder`, `queue`, `stored-data`, `stored_data` | 1.0 |  |
 | **group** | `group` | 1.0 | v2 primitive — translucent labeled substrate wrapping nested parts |
-| **hexprism** | `hexagon` | 0.7 | v3.2 — 6-gon prism: API gateway / middleware semantics |
+| **hexprism** | `hexagon` | 0.7 | v3.2 — 6-gon prism: API gateway / middleware semantics. v3.12 — palette left/rightGradient shade the visible walls by normal (box left/right semantics); projected face fills pin to each wall's iso plane |
 | **iso_text** | `text` | 0.3 | flat text panel (low extrusion) |
-| **octprism** | `octprism` | 1.0 | v3.2 — 8-gon prism: firewall (stop-sign) / decision-gate semantics |
-| **person** | `c4-person`, `c4_person`, `person` | 1.2 |  |
+| **octprism** | `octprism` | 1.0 | v3.2 — 8-gon prism: firewall (stop-sign) / decision-gate semantics. v3.12 — palette left/rightGradient shade the visible walls by normal (box left/right semantics); projected face fills pin to each wall's iso plane |
+| **person** | `c4-person`, `c4_person`, `person` | 1.2 | human actor: sphere head fused onto a dome torso. Body halves take palette.left/right; palette.leftGradient/rightGradient shade the matching half, palette.topGradient shades BOTH halves as one body gradient (no drawn top face). effects.outline / dropShadow / backglow follow the true head+dome silhouette. style.faces and effects.pattern are ignored (validator warns) |
 | **rack** | `rack` | 1.0 | v3.11 — server rack with slot shelves. params: slots (default 4). Semantic: physical server rack, blade chassis, equipment cabinet. |
 | **rectangle** | `callout`, `class`, `code`, `document`, `hierarchy`, `image`, `package`, `page`, `rectangle`, `sequence-diagram`, `sequence_diagram`, `sql-table`, `sql_table`, `square`, `step` | 1.0 |  |
-| **triprism** | `triprism` | 1.0 | v3.2 — 3-gon prism: alert / one-way fan-out semantics |
+| **triprism** | `triprism` | 1.0 | v3.2 — 3-gon prism: alert / one-way fan-out semantics. v3.12 — palette left/rightGradient shade the visible walls by normal (box left/right semantics); projected face fills pin to each wall's iso plane |
 | **wedge** | `wedge` | 0.7 | v3.10 — sloped prism: back edge raised to full height, front edge at z=0. Semantic: ramp, data ingestion pipeline, traffic escalation. |
 
 ## Composition primitives
@@ -88,6 +88,7 @@ Paint an iso-aware backdrop under the scene. grid: iso draws a diamond rhombus l
 | Field | Meaning |
 |---|---|
 | `background` | solid background color (also bleed color behind patterns) |
+| `depthSort` | v5.2 — true / false (default false). Painter's-algorithm depth sort: parts paint back-to-front by world depth (corner sum x+y+z), merged across groups, instead of author order; connector routes layer by their endpoints' depth instead of sitting under every body. Group slabs/platforms still paint at the very back. Turn on when parts from different groups overlap in projection or when author order would paint a back part over a front one. Iso projection only (no effect with projection: top). |
 | `grid` | iso | dots | hatch | solid | none |
 | `gridColor` | pattern stroke / dot color |
 | `gridStep` | tile size in world units (default 40) |
@@ -115,7 +116,7 @@ Screen-space callout pinned to a composite part. Multi-line text is supported vi
 
 **Where:** `node.connectors[*]`
 
-**Syntax:** `{from: <part-id>, to: <part-id>, routing: straight|orthogonal|bezier, arrow: none|triangle, label: "…"}`
+**Syntax:** `{from: <part-id>, to: <part-id>, routing: straight|orthogonal|orthogonal2|bezier, arrow: none|triangle, label: "…"}`
 
 Directed line between two parts, optionally labeled and orthogonal-routed. Coplanarity contract: the two endpoints should share the same base height (wz / tier) — orthogonal connectors hug the ground plane, so same-tier links render as clean 2D L-shapes. Connecting endpoints at DIFFERENT heights forces a vertical drop segment (riser); do that only to express a deliberate cross-tier call (e.g. gateway layer → data layer), never as a side effect of giving peer nodes different wz.
 
@@ -123,12 +124,12 @@ Directed line between two parts, optionally labeled and orthogonal-routed. Copla
 |---|---|
 | `arrow` | none = no head; triangle = filled arrowhead at the dst |
 | `bend` | v4.4 — {wx, wy} world offset on the route's interior so a Studio edge-drag shifts the line while both endpoints stay docked |
-| `elbow` | v3.1 — orthogonal elbow bias: xFirst | yFirst (default: the axis the source face exits along) |
+| `elbow` | v3.1 — orthogonal elbow bias: xFirst | yFirst (default: the axis the source face exits along). orthogonal2 auto-routes and ignores elbow. |
 | `from` | source part id; "id.anchor" picks a specific face-centre (e.g. central.right-mid). Bare ids auto-pick the face FACING the other endpoint. STRONGLY PREFER a target at the SAME height (wz/tier) as this source — same-height pairs route as clean flat 2D lines; pick the coplanar candidate when several would work. |
 | `labelBg` | pill background (default #FFFFFFEE) |
 | `labelColor` | v3.1 — pill ink (default #1F2433); dim it for dark scenes |
 | `labelFontSize` | v3.1 — pill font size (default 11) |
-| `routing` | ALWAYS use orthogonal — every segment rides the iso ground axes, flush with the 2.5D grid (collinear endpoints collapse to one on-axis segment). straight/bezier cut across the grid and are reserved for non-iso freeform sketches. Endpoints should be coplanar (same wz); see Purpose for cross-tier risers. |
+| `routing` | ALWAYS use orthogonal — every segment rides the iso ground axes, flush with the 2.5D grid (collinear endpoints collapse to one on-axis segment). orthogonal2 (opt-in v2) keeps the same iso-axis discipline but searches a multi-segment route that detours around node footprints and avoids crossing already-placed edges — reach for it when a dense scene makes plain orthogonal tunnel a node or cross another line. straight/bezier cut across the grid and are reserved for non-iso freeform sketches. Endpoints should be coplanar (same wz); see Purpose for cross-tier risers. |
 | `to` | destination part id (same anchor syntax). Choose an endpoint coplanar with `from` (same wz/tier) whenever possible; only span heights for an intentional cross-tier link, which renders a vertical drop segment. |
 | `waypoints` | v4.6 — explicit interior corner list [{wx, wy}, …] (world coords, source→target) the route threads through, so a Studio edge-drag can move ONE segment independently. Supersedes bend + the auto route; endpoints stay docked. Auto-kept iso-axis-aligned. |
 
@@ -199,9 +200,9 @@ Every field under each `style.*` sub-block.
 
 | Block | Fields |
 |---|---|
-| `palette` | `top`, `left`, `right`, `topGradient {from, to, dir}`, `leftGradient {from, to, dir}`, `rightGradient {from, to, dir}` |
+| `palette` | `top`, `left`, `right`, `topGradient {from, to, dir}`, `leftGradient {from, to, dir}`, `rightGradient {from, to, dir}`, `note: on prisms (v3.12) left/rightGradient shade the visible side walls by normal dominance — +x-facing walls take right, +y-facing walls take left, matching the box's two-wall semantics` |
 | `stroke` | `color`, `width`, `dash` |
-| `faces (v3.3)` | `map of face name → {fill, strokes}; names: top|left|right (box family), top|side0..sideN-1 (prisms), "*" wildcard; outranks palette`, `fill {kind: solid|linearGradient|radialGradient|pattern, color, stops: [{offset 0..1, color}], angle (linear, degrees), cx/cy (radial 0..1), pattern {kind: hatch|dots, color, spacing, angle, projected}}`, `projected: true pins the pattern tile to the face's iso plane instead of screen space`, `strokes: [{color, width, dash, opacity}] — multiple re-traces per face, list order = paint order (put thin highlight lines after wide outlines)`, `note: a pattern fill REPLACES the base fill (transparent tile background); supported on the box family, prisms, and cylinders (top/left/right) — cloud/person/sphere keep palette only for now` |
+| `faces (v3.3)` | `map of face name → {fill, strokes}; names: top|left|right (box family), top|side0..sideN-1 (prisms), "*" wildcard; outranks palette`, `fill {kind: solid|linearGradient|radialGradient|pattern, color, stops: [{offset 0..1, color}], angle (linear, degrees), cx/cy (radial 0..1), pattern {kind: hatch|dots, color, spacing, angle, projected}}`, `projected: true pins the pattern tile to the face's iso plane instead of screen space — on prisms (v3.12) each side0..sideN-1 wall gets its own edge-aligned plane matrix, so hatch/dots hug every wall, not just box left/right`, `strokes: [{color, width, dash, opacity}] — multiple re-traces per face, list order = paint order (put thin highlight lines after wide outlines)`, `note: a pattern fill REPLACES the base fill (transparent tile background); supported on the box family, prisms, and cylinders (top/left/right) — cloud/person/sphere keep palette only for now` |
 | `text` | `family`, `size (a MAXIMUM — top-face labels auto-wrap at word boundaries and auto-shrink so they never overflow the face; icons are clamped to the face too)`, `weight`, `color`, `orient`, `boxBg`, `boxBorder` |
 | `effects` | `opacity`, `margin`, `cornerRadius`, `dropShadow {dx, dy, blur, color}`, `backglow {color, radius, opacity}`, `blur (v3.7) — gaussian stdDev in px over the whole part; fog / ghost / de-emphasized layers`, `outline {color, width, dash, opacity} (v3.8) — accent ring along the part's full silhouette (selection / emphasis), distinct from per-face stroke; hugs the true outline of every shape`, `pattern {kind: hatch|dots, color, spacing, angle}`, `wireframe (bool — line-art: strokes only, no fills; ghost parts are exempt from overlap warnings)`, `grain {intensity 0..1, scale} (film-grain noise on the faces)`, `faceSplit (bool — rounded boxes only: split the single wrap-around side band into independent left/right faces so a rounded cube shades per-face like a sharp one; needs cornerRadius>0, no-op otherwise)` |
 
@@ -214,7 +215,7 @@ Closed vocabularies the engine accepts verbatim — a value outside the set sile
 | `annotation_side` | `top`, `right`, `bottom`, `left` |
 | `connector_anchor` | `top`, `top-mid`, `center`, `bottom`, `bottom-mid`, `left`, `left-mid`, `right`, `right-mid`, `back`, `back-mid`, `front`, `front-mid` |
 | `connector_arrow` | `none`, `triangle` |
-| `connector_routing` | `straight`, `orthogonal`, `bezier` |
+| `connector_routing` | `straight`, `orthogonal`, `orthogonal2`, `bezier` |
 | `layout_mode` | `row`, `column`, `grid`, `ring`, `auto` |
 | `place_relation` | `rightOf`, `leftOf`, `inFrontOf`, `behind`, `above` |
 

@@ -1,0 +1,31 @@
+# WS-G demo — the routing actuator's CROSSING class.
+#
+# A long horizontal bus (api → store) and a vertical drop (auth → audit) cut
+# straight across each other under v1 orthogonal routing (readability
+# crossings=1). This golden freezes the raw render (defect visible). The
+# repair loop (`isotopo render` runs it by default) escalates a crossing edge
+# to routing:"orthogonal2", re-measures, and keeps the reroute only because
+# the weighted crossing+tunnel sum strictly drops to zero — see
+# TestRepairDemoSamples in repair_routing_test.go.
+canvas: { background: "#0E1726", padding: 50 }
+nodes:
+  scene:
+    shape: composite
+    parts:
+      - { id: api, shape: rectangle, geom: { w: 76, d: 66, h: 34 }, label: "API",
+          offset: { wx: 0, wy: 100 },
+          style: { palette: { top: "#274060" }, text: { color: "#DCE7F5" } } }
+      - { id: store, shape: rectangle, geom: { w: 76, d: 66, h: 34 }, label: "Store",
+          offset: { wx: 420, wy: 100 },
+          style: { palette: { top: "#3E5426" }, text: { color: "#DCE7F5" } } }
+      - { id: auth, shape: rectangle, geom: { w: 76, d: 66, h: 34 }, label: "Auth",
+          offset: { wx: 210, wy: -110 },
+          style: { palette: { top: "#4A3A72" }, text: { color: "#DCE7F5" } } }
+      - { id: audit, shape: rectangle, geom: { w: 76, d: 66, h: 34 }, label: "Audit",
+          offset: { wx: 210, wy: 310 },
+          style: { palette: { top: "#6B4A26" }, text: { color: "#DCE7F5" } } }
+    connectors:
+      - { from: api, to: store, routing: orthogonal, arrow: triangle,
+          stroke: { color: "#7FB0E0" } }
+      - { from: auth, to: audit, routing: orthogonal, arrow: triangle,
+          stroke: { color: "#9FD080" } }

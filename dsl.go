@@ -95,10 +95,17 @@ type Connector struct {
 	Waypoints []WorldPoint `yaml:"waypoints,omitempty" json:"waypoints,omitempty"`
 
 	// v1.5 — routing strategy:
-	//   "straight"   — single segment from anchor to anchor (default)
-	//   "orthogonal" — U-shape bending along iso ground axes (world +x then
-	//                   world +y then world +x), reads like a PCB / Manhattan
-	//                   route in iso projection
+	//   "straight"    — single segment from anchor to anchor (default)
+	//   "orthogonal"  — U-shape bending along iso ground axes (world +x then
+	//                    world +y then world +x), reads like a PCB / Manhattan
+	//                    route in iso projection
+	//   "orthogonal2" — opt-in v2 of the orthogonal router: multi-segment
+	//                    obstacle- AND crossing-aware Manhattan route searched
+	//                    on a sparse grid (see inject_router2.go). Same stubs,
+	//                    risers and anchor semantics as "orthogonal", but it
+	//                    detours around nodes instead of tunnelling and dodges
+	//                    already-placed edges; fan-out channel width adapts to
+	//                    the face span. "orthogonal" output is unchanged.
 	Routing string `yaml:"routing,omitempty" json:"routing,omitempty"`
 }
 
@@ -109,7 +116,7 @@ type Connector struct {
 // for arrow/routing (no arrow; default straight route).
 var (
 	arrowNames      = []string{"none", "triangle"}
-	routingNames    = []string{"straight", "orthogonal", "bezier"}
+	routingNames    = []string{"straight", "orthogonal", "orthogonal2", "bezier"}
 	layoutModes     = []string{"row", "column", "grid", "ring", "auto"}
 	placeRelations  = []string{"rightOf", "leftOf", "inFrontOf", "behind", "above"}
 	annotationSides = []string{"top", "right", "bottom", "left"}
@@ -571,6 +578,15 @@ type Canvas struct {
 	// match Mac internal displays. Set to -1 to disable (tight crop).
 	// Example: 1.6 = 16:10, 1.7778 = 16:9, 1.5 = 3:2.
 	AspectRatio float64 `yaml:"aspectRatio,omitempty" json:"aspectRatio,omitempty"`
+	// DepthSort (v5.2) enables true painter's-algorithm ordering: lowered
+	// parts are stably sorted back-to-front by projected world depth
+	// (corner sum x+y+z along the iso view axis), merged ACROSS groups,
+	// so paint order no longer follows author/source order. Connector
+	// routes are layered by their endpoints' depth instead of being fixed
+	// under every body. The substrate/platform partition is preserved
+	// (group slabs always paint at the very back). Default false keeps
+	// the legacy author-order painting byte-for-byte.
+	DepthSort bool `yaml:"depthSort,omitempty" json:"depthSort,omitempty"`
 }
 
 // Annotation is a screen-space callout pinned to a composite part. It

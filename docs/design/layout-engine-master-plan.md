@@ -233,8 +233,12 @@ ranking, (c) the current `R`. Seeded from `samples/topology/` + `style_refer/`
     0-iteration no-ops (golden-stable, full suite green). Converges ≤4 iters;
     deterministic.
   - **Still open (rolls into P1.x / later):** body-vs-body occlusion (node fully
-    hidden) is not yet a detected/repaired signal; nested (in-group) overlaps use
-    only the top-level pass for now.
+    hidden) is not yet a detected/repaired signal.
+  - **Nested (in-group) overlaps — DONE (optim wave 1, WS-G):**
+    `repairGroupOverlaps` runs the same push-apart kernel over each group's
+    direct children (in-group coordinates), measured-and-conservative — kept
+    only when the in-group collision count strictly drops and R.Cost does not
+    rise, else the offsets are rolled back wholesale.
 - **Phase 2 — IN PROGRESS.**
   - **Detection completion (measurement prerequisite) — DONE.** Straight-routed
     connectors were scored via the orthogonal *staircase* plan route, so two
@@ -259,6 +263,17 @@ ranking, (c) the current `R`. Seeded from `samples/topology/` + `style_refer/`
     graphs actually surface orthogonal crossings the tent misses.
 - **Net P2 result:** straight-edge crossing/tunnel detection completed (shipped);
   router left as-is (already crossing-free in practice).
+- **P2 revisited — SHIPPED (optim wave 1):** the "revisit if dense graphs
+  surface crossings" trigger fired. `inject_router2.go` adds an opt-in
+  obstacle-avoiding router (`routing: orthogonal2`): Dijkstra over a sparse
+  Hanan grid with a cost kernel aligned to the evaluator (tunnel 1000,
+  crossing 100, bend 3, length 0.01); fan-out channel width adapts to the
+  source face span. The default `orthogonal` path is byte-for-byte untouched.
+  `repairRouting` (WS-G) closes the loop: connectors whose real collected
+  routes (routecollect.go) tunnel or cross are greedily escalated to
+  orthogonal2 inside the repair convergence loop, accepted only on a strict
+  weighted-defect AND R.Cost drop, else rolled back byte-identically. The
+  scored-but-never-repaired gap for crossings/tunnels is closed.
 - **Phase 3 — graph-class adaptive placement — DONE.**
   - **Measured the degradation first** (discipline, post-P2): a dense cyclic mesh
     scored **R=0.052 with 6 edges tunnelling** under longest-path layering, and

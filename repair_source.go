@@ -86,7 +86,9 @@ func RepairSourceWithOptions(lang string, src []byte, opts RepairOptions) ([]byt
 // adds or removes parts, so the shapes match) and emits one set-field op per
 // part whose repairable fields changed. Fields covered are exactly the ones
 // the repair passes mutate: offset (overlap separation, neighbour-label
-// lifts), layout.padding (caption clearance), style.text.color (contrast).
+// lifts), layout.padding (caption clearance), style.text.color (contrast),
+// plus per-connector routing (the WS-G routing actuator's orthogonal →
+// orthogonal2 escalation).
 func diffRepairOps(base, repaired *Document) []EditOp {
 	var ops []EditOp
 	for id, bn := range base.Nodes {
@@ -95,8 +97,28 @@ func diffRepairOps(base, repaired *Document) []EditOp {
 			continue
 		}
 		diffRepairParts(bn.Parts, rn.Parts, &ops)
+		diffRepairConnectors(bn.Connectors, rn.Connectors, &ops)
 	}
 	return ops
+}
+
+// diffRepairConnectors emits a set-field edge op for every connector whose
+// routing the repair loop changed (repair never adds or removes connectors,
+// so positions align; CI is the connector's index, the same key Studio edge
+// ops and data-connector use).
+func diffRepairConnectors(base, repaired []*Connector, ops *[]EditOp) {
+	n := len(base)
+	if len(repaired) < n {
+		n = len(repaired)
+	}
+	for ci := 0; ci < n; ci++ {
+		b, r := base[ci], repaired[ci]
+		if b == nil || r == nil || b.Routing == r.Routing || r.Routing == "" {
+			continue
+		}
+		*ops = append(*ops, EditOp{Kind: "set-field", Target: "edge", CI: ci,
+			Fields: map[string]string{"routing": r.Routing}})
+	}
 }
 
 func diffRepairParts(base, repaired []*CompositePart, ops *[]EditOp) {

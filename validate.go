@@ -214,6 +214,18 @@ func Validate(doc *Document) []Issue {
 		}
 	}
 
+	// v5.2 — canvas.depthSort only affects the iso painter order; the top-down
+	// plan view has no painter stacking, so the combination is silently inert.
+	// Surface it as a warning so the author knows the flag isn't doing anything.
+	if doc.Canvas != nil && doc.Canvas.DepthSort && strings.ToLower(doc.Canvas.Projection) == "top" {
+		issues = append(issues, Issue{
+			Severity: SeverityWarning,
+			Path:     "canvas.depthSort",
+			Message:  "canvas.depthSort has no effect with projection: top (plan view has no painter stacking)",
+			Suggest:  "remove depthSort or use the default iso projection",
+		})
+	}
+
 	// canvas.padding feeds the viewBox directly; a non-finite or astronomically
 	// large value overflows it (the renderer also clamps as the safety net).
 	if doc.Canvas != nil {

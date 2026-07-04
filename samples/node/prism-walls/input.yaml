@@ -1,0 +1,29 @@
+# prism-walls — v3.12 showcase: the prism family speaks the box's wall
+# vocabulary. palette left/rightGradient shade the visible walls by
+# normal dominance (+x walls → right, +y walls → left), and a Projected
+# hatch on side2 pins to that wall's TRUE iso plane via its per-side
+# edge matrix (previously it fell back to the top-face matrix and
+# floated off the wall).
+canvas:
+  background: "#F6F5FA"
+  padding: 40
+nodes:
+  gateway:
+    shape: hexprism
+    geom: { w: 150, d: 150, h: 48 }
+    icon: "iso://glyph/cloud"
+    label: "Edge Gateway"
+    style:
+      palette:
+        top: "#EDE9FE"
+        leftGradient:  { from: "#6D28D9", to: "#3B1D74", dir: "down" }
+        rightGradient: { from: "#8B5CF6", to: "#5B3DB0", dir: "down" }
+      faces:
+        side2:
+          fill:
+            kind: pattern
+            pattern: { kind: hatch, color: "#C4B5FD", spacing: 6, angle: 0, projected: true }
+          strokes:
+            - { color: "#4C1D95", width: 1.2 }
+      stroke: { color: "#4C1D95", width: 1.4 }
+      text: { color: "#3B1D74" }

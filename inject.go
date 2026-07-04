@@ -12,10 +12,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/MarkovWangRR/iso-topology/iso25d"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/MarkovWangRR/iso-topology/iso25d"
+	"github.com/MarkovWangRR/iso-topology/textmetrics"
 )
 
 // scaleDashForWidth keeps a dashed/dotted connector legible at thick strokes.
@@ -189,7 +191,12 @@ func injectScreenLabels(svg string, infos []partInfo, extraObstacles []screenRec
 			weight = "600"
 		}
 		fontSize := p.labelFontSize
-		boxW := float64(len(text))*fontSize*0.58 + 16
+		// Surgical CJK fix: wide runes advance one em (BYTE counting
+		// inflated CJK labels ~3× — each ideograph is 3 bytes in
+		// UTF-8), while narrow runes keep the legacy per-byte advance
+		// so every frozen non-CJK golden (incl. em-dash / middle-dot
+		// labels) stays byte-identical.
+		boxW := textmetrics.TextPxWideBytes(text, fontSize, textmetrics.NarrowScreenLabel) + 16
 		boxH := fontSize + 10
 
 		// Own silhouette doesn't block the label hanging off its edge —
@@ -335,7 +342,14 @@ func collectDescendantObstacles(parts []*CompositePart, baseX, baseY, baseZ floa
 	}
 }
 
-func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo, sceneParts []*CompositePart, nSubstrates int) (string, []screenRect) {
+// rc is the WS-E in-memory route collector (routecollect.go): when non-nil,
+// every emitted connector's real pre-clip geometry is recorded so evaluators
+// can consume structured routes instead of regexing data-route out of the
+// SVG. Collection is pure observation — a non-nil collector never changes a
+// single output byte (straight edges, by contract, still emit NO data-route).
+// depthSort is the WS-A canvas.depthSort flag: routes are layered by endpoint
+// depth instead of pinned under all bodies.
+func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo, sceneParts []*CompositePart, nSubstrates int, rc *routeCollector, depthSort bool) (string, []screenRect) {
 	project := projectIso
 	tx, ty := partsScreenOrigin(infos)
 
@@ -440,7 +454,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		promFrom := ar.promoteToContainer(c.From, c.To)
 		effFrom[i] = ar.auto(promFrom, c.To)
 		effTo[i] = ar.auto(c.To, promFrom)
-		if c.Routing != "orthogonal" {
+		if c.Routing != "orthogonal" && c.Routing != "orthogonal2" {
 			continue
 		}
 		sWX, sWY, _, ok1 := ar.world(effFrom[i])
@@ -499,7 +513,12 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 
 	var sb strings.Builder
 	var overlay strings.Builder
-	sb.WriteString(`<g data-layer="connectors">`)
+	// v5.2 — sb holds ONLY the route markup (no <g data-layer> wrapper);
+	// connStart[ci] records where connector ci's markup begins so the
+	// depthSort mode can re-bucket individual routes into depth layers.
+	// The default mode wraps the whole builder in the single legacy
+	// layer, producing byte-identical output to the pre-v5.2 renderer.
+	connStart := make([]int, len(conns)+1)
 
 	// Obstacles for pill placement + segment rects handed back to later
 	// layers. Substrate slabs are not pill obstacles — a pill ON a slab
@@ -514,7 +533,13 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 	var segRects []screenRect
 	var placedPills []screenRect
 	var drawnLines []drawnLine
+	// v2 router — world polylines of connectors already routed this pass, so
+	// each orthogonal2 route can price crossings against them (the +100
+	// scorecard weight; see inject_router2.go). v1 connectors contribute their
+	// routes too but never read the slice, so the default path is unchanged.
+	var placedRoutes [][][2]float64
 	for ci, c := range conns {
+		connStart[ci] = sb.Len()
 		stroke, width, dash := "#7A8390", 1.4, ""
 		if c.Stroke != nil {
 			if c.Stroke.Color != "" {
@@ -537,8 +562,13 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		// data-route so Studio can hit-test a segment (screen) and edit it in
 		// world space without re-deriving the route server-side.
 		var routeWorld, routeScreen [][2]float64
+		// collWorld/collScreen are the WS-E collector's counterparts for the
+		// straight/bezier branches, which by contract never emit data-route:
+		// keeping them separate from routeWorld/routeScreen guarantees route
+		// collection can't leak a new attribute into the SVG.
+		var collWorld, collScreen [][2]float64
 		switch c.Routing {
-		case "orthogonal":
+		case "orthogonal", "orthogonal2":
 			// Anchor-aware L/Z in the iso world ground plane.
 			//
 			// Each endpoint first walks `stub` along its face normal (so the
@@ -584,7 +614,15 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			// the normal: (-sdy, sdx). Channel width is fixed in world
 			// units; stays well inside the face span for the default
 			// 70..200-wide parts used in the demos.
-			const channelW = 14.0
+			// v1 keeps the historical fixed 14-unit channel; orthogonal2
+			// adapts the width to each endpoint's own face span (see
+			// router2ChannelW) so a fan-out neither overflows a narrow face
+			// nor bunches every exit at the middle of a wide one.
+			sChannelW, tChannelW := 14.0, 14.0
+			if c.Routing == "orthogonal2" {
+				sChannelW = router2ChannelW(ar, effFrom[ci], srcSideCount[ar.sideKey(effFrom[ci])])
+				tChannelW = router2ChannelW(ar, effTo[ci], tgtSideCount[ar.sideKey(effTo[ci])])
+			}
 			var sStagger, tStagger float64
 			// Collinear edges keep stagger 0 — shifting them would
 			// break the single-segment route the user laid out for.
@@ -595,8 +633,8 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				tN, tIdx := tgtSideCount[tgtKey], tgtSideIdx[tgtKey]
 				srcSideIdx[srcKey]++
 				tgtSideIdx[tgtKey]++
-				sStagger = (float64(sIdx) - float64(sN-1)/2) * channelW
-				tStagger = (float64(tIdx) - float64(tN-1)/2) * channelW
+				sStagger = (float64(sIdx) - float64(sN-1)/2) * sChannelW
+				tStagger = (float64(tIdx) - float64(tN-1)/2) * tChannelW
 			}
 			sTanX, sTanY := -sdy, sdx
 			tTanX, tTanY := -tdy, tdx
@@ -626,6 +664,22 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			const stub = 24.0
 			sStubX, sStubY := sWX+sdx*stub, sWY+sdy*stub
 			tStubX, tStubY := tWX+tdx*stub, tWY+tdy*stub
+
+			// orthogonal2 (opt-in v2): search a multi-segment obstacle- and
+			// crossing-aware route between the two stub points (see
+			// inject_router2.go). Explicit waypoints / bend keep their
+			// existing override semantics, so v2 only replaces the AUTO
+			// route; nil (degenerate anchors, oversized grid, unreachable)
+			// falls back to the v1 elbow route below.
+			var v2Pts [][2]float64
+			if c.Routing == "orthogonal2" && c.Bend == nil && len(c.Waypoints) == 0 {
+				fromID2, _ := ar.parse(effFrom[ci])
+				toID2, _ := ar.parse(effTo[ci])
+				v2Pts = route(
+					routerAnchor{ID: fromID2, X: sStubX, Y: sStubY, DX: sdx, DY: sdy, Z: srcZ},
+					routerAnchor{ID: toID2, X: tStubX, Y: tStubY, DX: tdx, DY: tdy, Z: tgtZ},
+					obstacles, placedRoutes)
+			}
 
 			var worldPts [][3]float64
 			xFirst := math.Abs(sdx) > math.Abs(sdy)
@@ -689,7 +743,22 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				}
 				return pts
 			}
-			if xFirst {
+			if len(v2Pts) >= 2 {
+				// v2 route found: thread the searched waypoints at routeZ
+				// through the same anchor/stub/riser scaffolding v1 uses
+				// (v2Pts[0] is the source stub itself — the riser helper
+				// already emits it at routeZ when the endpoint floats).
+				worldPts = [][3]float64{
+					{sWX, sWY, srcZ},
+					{sStubX, sStubY, srcZ},
+				}
+				worldPts = appendRiserSrc(worldPts)
+				for _, p := range v2Pts[1:] {
+					worldPts = append(worldPts, [3]float64{p[0], p[1], routeZ})
+				}
+				worldPts = appendRiserTgt(worldPts)
+				worldPts = append(worldPts, [3]float64{tWX, tWY, tgtZ})
+			} else if xFirst {
 				// Source exits along world x → walk x then y.
 				worldPts = [][3]float64{
 					{sWX, sWY, srcZ},
@@ -854,6 +923,13 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			} else {
 				pts = [][2]float64{{x1, y1}, {x2, y2}}
 			}
+			// WS-E collection: recover the drawn curve's WORLD track by
+			// sampling the quadratic and inverse-projecting (pre-clip).
+			if rc != nil {
+				_, _, srcZ, _ := ar.world(c.From)
+				_, _, tgtZ, _ := ar.world(c.To)
+				collScreen, collWorld = sampleBezierRoute(pts, srcZ, tgtZ, tx, ty)
+			}
 		default: // "straight" or empty
 			x1, y1, ok1 := ar.screen(c.From)
 			x2, y2, ok2 := ar.screen(c.To)
@@ -861,6 +937,22 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				continue
 			}
 			pts = [][2]float64{{x1, y1}, {x2, y2}}
+			// WS-E collection: the drawn line IS the segment between the two
+			// world anchors (linear projection), so record those (pre-clip).
+			if rc != nil {
+				sWX, sWY, _, _ := ar.world(c.From)
+				tWX, tWY, _, _ := ar.world(c.To)
+				collWorld = [][2]float64{{sWX, sWY}, {tWX, tWY}}
+				collScreen = [][2]float64{{x1, y1}, {x2, y2}}
+			}
+		}
+
+		// Record the finished world polyline (orthogonal family only — the
+		// other routings never fill routeWorld) so later orthogonal2 routes
+		// can price crossings against every edge already placed. Pre-clip
+		// coords, matching the data-route frame the evaluator scores.
+		if len(routeWorld) >= 2 {
+			placedRoutes = append(placedRoutes, routeWorld)
 		}
 
 		// v3.2.2 — terminal despike: drop a sub-7px final segment that
@@ -976,6 +1068,27 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		// during the drag (intermediate consistency), not just on drop.
 		fromID, _ := ar.parse(c.From)
 		toID, _ := ar.parse(c.To)
+		// WS-E — record this connector's real route (pure observation; the
+		// SVG bytes below are untouched). Recording sits HERE, at the same
+		// gate the <path> emission passes, so the collector's coverage is
+		// exactly "connectors that actually got drawn": for orthogonal edges
+		// that means the very corners serialized as data-route — the legacy
+		// regex evaluator's coverage — while straight/bezier edges add the
+		// geometry the regex path never saw.
+		if rc != nil {
+			switch c.Routing {
+			case "orthogonal", "orthogonal2":
+				// orthogonal2 must record its REAL routed corners: dropping it to
+				// the straight default made the evaluator score the plan router's
+				// (crossing-avoiding) fallback instead of the drawn route, so a
+				// repair could "clear" a crossing that was still on screen.
+				rc.add(ci, fromID, toID, c.Routing, routeWorld, routeScreen)
+			case "bezier":
+				rc.add(ci, fromID, toID, "bezier", collWorld, collScreen)
+			default:
+				rc.add(ci, fromID, toID, "straight", collWorld, collScreen)
+			}
+		}
 		// Connector gradient: a userSpaceOnUse linear gradient laid along the
 		// route (source endpoint -> target endpoint). Stroke then references it,
 		// so the line (and its dash segments + arrowhead) fade source->target.
@@ -1043,7 +1156,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			if lfs <= 0 {
 				lfs = 13
 			}
-			textW := float64(len([]rune(c.Label)))*lfs*0.64 + 12
+			textW := textWidthPx(c.Label, lfs, textmetrics.NarrowConnectorLabel) + 12
 
 			type seg struct{ mx, my, length, fromMid float64 }
 			total := 0.0
@@ -1090,7 +1203,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			)
 		}
 	}
-	sb.WriteString(`</g>`)
+	connStart[len(conns)] = sb.Len()
 
 	// Grow the viewBox to cover every connector waypoint (plus a pad
 	// for stroke width + arrowheads) BEFORE splicing the layer in, so
@@ -1109,23 +1222,77 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 	// paint under every BODY part — iso silhouettes occlude crossing
 	// lines — but group slabs no longer swallow them. With nSubstrates ==
 	// 0 this degrades to the v1.6.5 behaviour (just after the <svg> tag).
-	start := strings.Index(svg, "<svg")
-	if start < 0 {
-		return svg, segRects
-	}
-	tagEnd := strings.Index(svg[start:], ">")
-	if tagEnd < 0 {
-		return svg, segRects
-	}
-	insertAt := start + tagEnd + 1
-	for k := 0; k < nSubstrates; k++ {
-		end, ok := partGroupEnd(svg, insertAt)
-		if !ok {
-			break
+	//
+	// v5.2 — canvas.depthSort layers routes by endpoint depth instead:
+	// each connector is spliced just BELOW its back-most endpoint part
+	// (paint index min(from, to) in the depth-sorted order, clamped to
+	// stay above the substrate block). Parts strictly behind both
+	// endpoints can no longer swallow a route between two foreground
+	// parts, while parts in front still occlude it — the 2.5D depth cue.
+	spliceAfterParts := func(svg, layer string, nParts int) string {
+		start := strings.Index(svg, "<svg")
+		if start < 0 {
+			return svg
 		}
-		insertAt = end
+		tagEnd := strings.Index(svg[start:], ">")
+		if tagEnd < 0 {
+			return svg
+		}
+		insertAt := start + tagEnd + 1
+		for k := 0; k < nParts; k++ {
+			end, ok := partGroupEnd(svg, insertAt)
+			if !ok {
+				break
+			}
+			insertAt = end
+		}
+		return svg[:insertAt] + layer + svg[insertAt:]
 	}
-	svg = svg[:insertAt] + sb.String() + svg[insertAt:]
+	if !depthSort {
+		svg = spliceAfterParts(svg, `<g data-layer="connectors">`+sb.String()+`</g>`, nSubstrates)
+	} else {
+		idxByID := make(map[string]int, len(infos))
+		for i, p := range infos {
+			if p.id != "" {
+				idxByID[p.id] = i
+			}
+		}
+		layerOf := func(ci int) int {
+			fi, okF := idxByID[connectorTarget(effFrom[ci])]
+			ti, okT := idxByID[connectorTarget(effTo[ci])]
+			if !okF || !okT {
+				return nSubstrates
+			}
+			k := fi
+			if ti < k {
+				k = ti
+			}
+			if k < nSubstrates {
+				k = nSubstrates
+			}
+			return k
+		}
+		routes := sb.String()
+		layers := map[int]string{nSubstrates: ""} // base layer always exists (Studio parity)
+		for ci := range conns {
+			m := routes[connStart[ci]:connStart[ci+1]]
+			if m == "" {
+				continue
+			}
+			layers[layerOf(ci)] += m
+		}
+		ks := make([]int, 0, len(layers))
+		for k := range layers {
+			ks = append(ks, k)
+		}
+		sort.Ints(ks)
+		// Each splice recounts <g data-part=…> groups from the top, and a
+		// route layer contains none, so earlier splices never skew later
+		// insertion points.
+		for _, k := range ks {
+			svg = spliceAfterParts(svg, `<g data-layer="connectors">`+layers[k]+`</g>`, k)
+		}
+	}
 
 	// Arrowheads and label pills go in a top overlay so a tip landing on
 	// a part's projection (occluded entry face) stays visible.
@@ -1217,13 +1384,10 @@ func injectAnnotations(svg string, anns []*Annotation, infos []partInfo, extraOb
 		for _, l := range lines {
 			w := 0.0
 			for _, rn := range l {
-				switch {
-				case rn >= 0x2E80: // CJK and beyond
-					w += 1.0
-				case rn >= 0x2500 && rn <= 0x257F: // box-drawing rules
-					w += 0.7
-				default:
-					w += 0.58
+				if rn >= 0x2500 && rn <= 0x257F { // box-drawing rules
+					w += textmetrics.BoxDrawingEm
+				} else {
+					w += textmetrics.RuneEm(rn, textmetrics.NarrowAnnotation)
 				}
 			}
 			if w > widest {
