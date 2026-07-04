@@ -118,7 +118,10 @@ icon: "iso://glyph/database/29B5E8" # tinted on dark top
 `isotopo validate` will warn if you forget this on a built-in icon.
 
 **Connectors:** `routing: orthogonal` (rides the iso grid — the default you
-want) | `straight` | `bezier`; arrow `triangle` | `none`. Async links differ by
+want) | `orthogonal2` (obstacle- and crossing-aware multi-segment router —
+switch a specific edge to it when `evaluate` reports that edge tunnelling a
+node or crossing another edge and placement nudges won't clear it) |
+`straight` | `bezier`; arrow `triangle` | `none`. Async links differ by
 `stroke.dash`, not by routing. Hairline widths (1–2) beat thick pipes.
 
 **Colour** — there is NO `style.fill`. A box is shaded by its three iso faces
@@ -233,6 +236,15 @@ diagram can skip the module loop.
   rest with `place: {rightOf|leftOf|above|inFrontOf|behind: <sibling-id>, gap: N}`.
   `gap` is in CELLS (1 cell = canvas `gridStep`, default 40). Arrange a
   container's children with `layout: {mode: row|column|grid|ring, gap: N}`.
+- **Dense DAG (15+ nodes, multi-layer fan-in/fan-out)?** Add an engine to the
+  auto container: `layout: { mode: auto, engine: elk }` (or `dagre`) — a real
+  layered layout replaces the built-in heuristic and typically eliminates most
+  crossings/tunnels. Offline and deterministic; falls back to the built-in
+  path (with a warning) if the engine can't handle the graph.
+- **Parts intentionally overlapping in projection** (stairs, stacked tiers,
+  dense boards) and something paints in the wrong order? Set
+  `canvas: { depthSort: true }` — parts then paint back-to-front by world
+  depth instead of authoring order.
 - A stair = each tile `{rightOf: prev, inFrontOf: prev}`. A board = one `group`
   with `layout: {mode: grid}`, `geom.w/d` omitted (auto-sizes). A ring =
   satellites on the anchor's four sides + four diagonals.
@@ -257,7 +269,11 @@ isotopo render  scene.yaml ./out
   render at exit 3.**
 - `evaluate`: aim for `crossings: 0` and `edges_through_nodes: 0`. A nonzero
   count means a connector tunnels a node or two edges cross — fix by routing the
-  group's representative node (§3.4), nudging placement, or splitting a lane.
+  group's representative node (§3.4), nudging placement, switching the guilty
+  edge to `routing: orthogonal2` (§2), or — for a dense DAG — re-laying the
+  container with `layout: { mode: auto, engine: elk }` (§4). `render` also runs
+  a repair pass by default that escalates tunnelling/crossing edges to
+  `orthogonal2` on its own when that measurably improves the scene.
   `evaluate scene.yaml ./out` also writes `plan.svg` marking the problems red.
 - **Aspect ratio:** read the rendered `topology.svg` `viewBox` (or `width`/
   `height`). If w:h is more lopsided than ~2.2:1 (or 1:2.2), re-grid the modules
@@ -374,6 +390,9 @@ isotopo serve scene.yaml      # → http://localhost:8731  (leave it running)
 
 **c) Spell out the human-in-the-loop options** (this is where a person beats
 round-tripping through you): in Studio they can **drag nodes to reposition**,
+**drag on empty canvas to marquee-select several nodes** (shift-click adds or
+removes; dragging any selected node **moves the whole selection together**, and
+Delete removes it — each as a single undo step; pan with alt- or middle-drag),
 **drag a node onto a group to move it in / onto the canvas to move it out**
 (the target group highlights), **right-click to restyle / edit details**,
 **toggle ◳ Iso / ◰ Plan**, **undo/redo**, and **export ↓ SVG / ↓ PNG / ↓ YAML**.
