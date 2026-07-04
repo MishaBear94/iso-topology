@@ -1,0 +1,13 @@
+# WS-H demo — body-vs-body occlusion, the "node fully hidden" class.
+# The small cache is painted first, then the big gateway tower is painted
+# in front of it: the cache's whole projected silhouette ends up under the
+# gateway (frac = 1.00). `isotopo validate` warns, the readability report
+# counts it under body_occlusions, and the repair loop pulls the cache out
+# to the left until both bodies (and the cache's label) read apart.
+canvas: {grid: none}
+nodes:
+  scene:
+    shape: composite
+    parts:
+      - {id: cache, label: Cache, shape: rectangle, geom: {w: 120, d: 120, h: 70}, offset: {wx: 0, wy: 0}}
+      - {id: gateway, label: Gateway, shape: rectangle, geom: {w: 260, d: 260, h: 260}, offset: {wx: 130, wy: 130}}

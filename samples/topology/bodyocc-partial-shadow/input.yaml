@@ -1,0 +1,12 @@
+# WS-H demo — body-vs-body occlusion, the partial-burial class.
+# The worker box is painted first; the taller tower in front projects over
+# roughly half of its silhouette (frac ≈ 0.57, above the 0.4 defect
+# threshold). Validate warns, body_occlusions counts 1, and one measured
+# repair push (worker −40 in x) separates the silhouettes.
+canvas: {grid: none}
+nodes:
+  scene:
+    shape: composite
+    parts:
+      - {id: worker, label: Worker, shape: rectangle, geom: {w: 140, d: 140, h: 80}, offset: {wx: 0, wy: 0}}
+      - {id: tower, label: Tower, shape: rectangle, geom: {w: 150, d: 150, h: 160}, offset: {wx: 150, wy: 40}}

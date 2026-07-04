@@ -154,6 +154,10 @@ type IsoReport struct {
 	// keeps its iso-specific meaning (distinct top-level parts including
 	// group slabs) untouched.
 	LeafNodeOverlaps int `json:"leaf_node_overlaps"`
+	// BodyOcclusions (WS-H) counts nodes whose projected silhouette a nearer
+	// (later-painted) body covers beyond bodyOcclusionThreshold — see
+	// BodyOcclusions in occlusion.go. Iso-only, height-induced.
+	BodyOcclusions int `json:"body_occlusions"`
 }
 
 // EvaluateIso scores the scene using the engine's real connector routes:
@@ -179,6 +183,9 @@ func evaluateIsoWith(n *Node, theme *Theme, canvas *Canvas, src isoRouteSource) 
 	// Readability silently solve-and-clear the doc, breaking any later pass
 	// (e.g. RepairScene) that needs the original Layout declarations.
 	n = cloneSceneForEval(n)
+	// WS-H: body-vs-body occlusion, measured on the same clone before the plan
+	// model solves it in place (bodyOcclusionsInNode clones again internally).
+	bodyOcc := len(bodyOcclusionsInNode(n, theme, canvas, bodyOcclusionThreshold))
 	rects, _, edges := buildPlanModel(n, theme, canvas)
 	var real map[int][][2]float64
 	switch src {
@@ -210,7 +217,7 @@ func evaluateIsoWith(n *Node, theme *Theme, canvas *Canvas, src isoRouteSource) 
 	// matching validate and the eye. Parent/child pairs share an owner and don't
 	// count.
 	rep.NodeOverlaps = countTopLevelCollisions(n.Parts, rects)
-	return &IsoReport{PlanReport: rep, LeafNodeOverlaps: leafOverlaps}
+	return &IsoReport{PlanReport: rep, LeafNodeOverlaps: leafOverlaps, BodyOcclusions: bodyOcc}
 }
 
 // countTopLevelCollisions returns the number of distinct top-level-part pairs
