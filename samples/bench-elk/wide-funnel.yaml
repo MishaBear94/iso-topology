@@ -1,0 +1,55 @@
+# wide-funnel: 18-node DAG — 6 producers funnel through 2 brokers into
+# 6 consumers with cross-tier bypass edges and a 4-stage control spine.
+# Heavy fan-in/fan-out plus bypasses make the built-in longest-path
+# solver tunnel bypass edges through the broker tier; engine: elk
+# spreads the tiers so every route has clear air.
+canvas: { background: "#101820", padding: 50 }
+nodes:
+  scene:
+    shape: composite
+    layout: { mode: auto, engine: elk }
+    parts:
+      - { id: a1, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "A1", style: { palette: { top: "#274060" }, text: { color: "#DCE7F5" } } }
+      - { id: a2, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "A2", style: { palette: { top: "#274060" }, text: { color: "#DCE7F5" } } }
+      - { id: a3, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "A3", style: { palette: { top: "#274060" }, text: { color: "#DCE7F5" } } }
+      - { id: a4, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "A4", style: { palette: { top: "#274060" }, text: { color: "#DCE7F5" } } }
+      - { id: a5, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "A5", style: { palette: { top: "#274060" }, text: { color: "#DCE7F5" } } }
+      - { id: a6, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "A6", style: { palette: { top: "#274060" }, text: { color: "#DCE7F5" } } }
+      - { id: b1, shape: rectangle, geom: { w: 120, d: 90, h: 44 }, label: "B1", style: { palette: { top: "#2E5339" }, text: { color: "#DCE7F5" } } }
+      - { id: b2, shape: rectangle, geom: { w: 120, d: 90, h: 44 }, label: "B2", style: { palette: { top: "#2E5339" }, text: { color: "#DCE7F5" } } }
+      - { id: c1, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "C1", style: { palette: { top: "#59421F" }, text: { color: "#DCE7F5" } } }
+      - { id: c2, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "C2", style: { palette: { top: "#59421F" }, text: { color: "#DCE7F5" } } }
+      - { id: c3, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "C3", style: { palette: { top: "#59421F" }, text: { color: "#DCE7F5" } } }
+      - { id: c4, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "C4", style: { palette: { top: "#59421F" }, text: { color: "#DCE7F5" } } }
+      - { id: c5, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "C5", style: { palette: { top: "#59421F" }, text: { color: "#DCE7F5" } } }
+      - { id: c6, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "C6", style: { palette: { top: "#59421F" }, text: { color: "#DCE7F5" } } }
+      - { id: g1, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "G1", style: { palette: { top: "#5A2A3B" }, text: { color: "#DCE7F5" } } }
+      - { id: g2, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "G2", style: { palette: { top: "#5A2A3B" }, text: { color: "#DCE7F5" } } }
+      - { id: g3, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "G3", style: { palette: { top: "#5A2A3B" }, text: { color: "#DCE7F5" } } }
+      - { id: g4, shape: rectangle, geom: { w: 96, d: 72, h: 28 }, label: "G4", style: { palette: { top: "#5A2A3B" }, text: { color: "#DCE7F5" } } }
+    connectors:
+      - { from: a1, to: b1, routing: orthogonal }
+      - { from: a2, to: b1, routing: orthogonal }
+      - { from: a3, to: b1, routing: orthogonal }
+      - { from: a3, to: b2, routing: orthogonal }
+      - { from: a4, to: b2, routing: orthogonal }
+      - { from: a5, to: b2, routing: orthogonal }
+      - { from: a6, to: b2, routing: orthogonal }
+      - { from: a6, to: b1, routing: orthogonal }
+      - { from: b1, to: c1, routing: orthogonal }
+      - { from: b1, to: c2, routing: orthogonal }
+      - { from: b1, to: c3, routing: orthogonal }
+      - { from: b2, to: c4, routing: orthogonal }
+      - { from: b2, to: c5, routing: orthogonal }
+      - { from: b2, to: c6, routing: orthogonal }
+      - { from: b1, to: c5, routing: orthogonal }
+      - { from: b2, to: c2, routing: orthogonal }
+      - { from: a1, to: c1, routing: orthogonal }
+      - { from: a5, to: c6, routing: orthogonal }
+      - { from: g1, to: g2, routing: orthogonal }
+      - { from: g2, to: g3, routing: orthogonal }
+      - { from: g3, to: g4, routing: orthogonal }
+      - { from: g1, to: b1, routing: orthogonal }
+      - { from: g2, to: b2, routing: orthogonal }
+      - { from: g4, to: c3, routing: orthogonal }
+      - { from: g4, to: c4, routing: orthogonal }

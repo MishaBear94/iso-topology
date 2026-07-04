@@ -25,7 +25,7 @@ CAPABILITIES v0.4.5 (the only DSL you may emit):
     canvas-grid: canvas: {background: "#FAFBFC", grid: iso, gridColor: "#E2E6EE", gridStep: 36}
     annotation: {anchor: <part-id>, text: "…", side: top|right|bottom|left, distance: 60}
     connector:  {from: <part-id>, to: <part-id>, routing: straight|orthogonal|orthogonal2|bezier, arrow: none|triangle, label: "…"}
-    layout:     layout: {mode: row|column|grid|ring, cols: N, gap: 1, padding: 1, align: start|center|end}
+    layout:     layout: {mode: row|column|grid|ring|auto, engine: elk|dagre, cols: N, gap: 1, padding: 1, align: start|center|end}
     place:      place: {rightOf: <sibling-id>, inFrontOf: <sibling-id>, above: <sibling-id>, gap: 1, gapX: 2, gapY: 0, align: start|center|end}
     preset:     theme: {presets: {<name>: <Style>}}  →  part: {preset: <name>}
     icon:       icon: "iso://glyph/<name>[/light|/RRGGBB]" | "iso://si/<slug>[/light|/RRGGBB]" | "iso://brand/<name>"

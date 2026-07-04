@@ -64,6 +64,19 @@ func applyLayout(n *Node, canvas *Canvas) []Issue {
 				p.Layout = nil
 			}
 		}
+		// v5 — opt-in engine dispatch: layout: {mode: auto, engine:
+		// elk|dagre} delegates the whole arrangement to d2's layered
+		// engines (layout_elk.go). On any failure it returns false
+		// (with a Warning already appended) and the built-in tiers
+		// below run exactly as before; engine == "" never enters here,
+		// so the default path stays byte-identical.
+		if n.Layout.Engine != "" {
+			if arrangeEngineAuto(n.Parts, n.Connectors, n.Layout, cell, "nodes.scene", &issues) {
+				checkSiblingOverlaps(n.Parts, "nodes.scene", &issues)
+				n.Layout = nil
+				return issues
+			}
+		}
 		// Graph-class adaptive, in three tiers:
 		//   - pure DAG                    → layered (Sugiyama-lite) as-is;
 		//   - mostly-DAG (back edges are  → break the cycles: reverse just the

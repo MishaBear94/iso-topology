@@ -187,17 +187,26 @@
                 "description": "Grid mode only. Default ceil(sqrt(n)).",
                 "type": "integer"
               },
+              "engine": {
+                "description": "v5 — scene-root mode auto only: delegate the arrangement to d2's embedded ELK / dagre engine (offline, deterministic, grid-snapped). Prefer elk for dense DAGs; omit for the built-in solver.",
+                "enum": [
+                  "elk",
+                  "dagre"
+                ],
+                "type": "string"
+              },
               "gap": {
                 "description": "Space between children in cells. Default 1.",
                 "type": "number"
               },
               "mode": {
-                "description": "row = world +x, column = world +y, grid = row-major wrap, ring = first child at the centre with the rest on a circle around it.",
+                "description": "row = world +x, column = world +y, grid = row-major wrap, ring = first child at the centre with the rest on a circle around it, auto = connector-driven layering of the whole scene (v4.2).",
                 "enum": [
                   "row",
                   "column",
                   "grid",
-                  "ring"
+                  "ring",
+                  "auto"
                 ],
                 "type": "string"
               },
@@ -265,17 +274,26 @@
                       "description": "Grid mode only. Default ceil(sqrt(n)).",
                       "type": "integer"
                     },
+                    "engine": {
+                      "description": "v5 — scene-root mode auto only: delegate the arrangement to d2's embedded ELK / dagre engine (offline, deterministic, grid-snapped). Prefer elk for dense DAGs; omit for the built-in solver.",
+                      "enum": [
+                        "elk",
+                        "dagre"
+                      ],
+                      "type": "string"
+                    },
                     "gap": {
                       "description": "Space between children in cells. Default 1.",
                       "type": "number"
                     },
                     "mode": {
-                      "description": "row = world +x, column = world +y, grid = row-major wrap, ring = first child at the centre with the rest on a circle around it.",
+                      "description": "row = world +x, column = world +y, grid = row-major wrap, ring = first child at the centre with the rest on a circle around it, auto = connector-driven layering of the whole scene (v4.2).",
                       "enum": [
                         "row",
                         "column",
                         "grid",
-                        "ring"
+                        "ring",
+                        "auto"
                       ],
                       "type": "string"
                     },

@@ -460,6 +460,11 @@ func Validate(doc *Document) []Issue {
 		if n.Shape != "composite" {
 			continue
 		}
+		// v5 — layout.engine misuse the solve dry-run can't see (engine on a
+		// non-auto root layout is ignored; unknown values still get a
+		// did-you-mean). Active mode-auto engines are checked by the solver
+		// itself, so the dry-run below surfaces those.
+		issues = append(issues, layoutEngineIssues(n.Layout, "nodes."+nodeID+".layout", true)...)
 		for _, iss := range layoutIssues(n, doc.Canvas) {
 			iss.Path = strings.Replace(iss.Path, "nodes.scene", "nodes."+nodeID, 1)
 			issues = append(issues, iss)
@@ -619,6 +624,9 @@ func validatePart(p *CompositePart, path string, validShapes []string, issues *[
 			Message:  "negative layout gap overlaps children",
 		})
 	}
+	// v5 — group layouts never dispatch to an external engine, so an
+	// engine key here is always ignored (and typos still get a hint).
+	*issues = append(*issues, layoutEngineIssues(p.Layout, path+".layout", false)...)
 	for i, child := range p.Parts {
 		validatePart(child, fmt.Sprintf("%s.parts[%d]", path, i), validShapes, issues)
 	}

@@ -130,6 +130,7 @@ func CapabilityReport() Capabilities {
 			"connector_arrow":   arrowNames,
 			"connector_routing": routingNames,
 			"layout_mode":       layoutModes,
+			"layout_engine":     layoutEngines,
 			"place_relation":    placeRelations,
 			"annotation_side":   annotationSides,
 		},
@@ -324,10 +325,11 @@ func buildPrimitiveCaps() []PrimitiveCap {
 		{
 			Name:    "layout",
 			Where:   "node.layout | node.parts[*].layout (groups)",
-			Syntax:  "layout: {mode: row|column|grid|ring, cols: N, gap: 1, padding: 1, align: start|center|end}",
+			Syntax:  "layout: {mode: row|column|grid|ring|auto, engine: elk|dagre, cols: N, gap: 1, padding: 1, align: start|center|end}",
 			Purpose: "Auto-arrange a container's parts along the iso ground axes — the preferred way to position parts. No hand-computed coordinates: row marches along world +x, column along +y, grid wraps row-major after cols, ring puts the FIRST child at the centre and distributes the rest on a circle around it (hub-and-spoke in one rule). A layout group's geom.w/d may be omitted; the substrate auto-sizes around the arranged content.",
 			Fields: map[string]string{
 				"mode":    "row | column | grid | ring | auto. auto (v4.2) is connector-driven: declare parts + connectors with NO place/coords and the engine layers the graph into a balanced iso flow — per-part style (faces/prisms/effects) is untouched. The other modes arrange a chosen structure.",
+				"engine":  "v5 — scene-root mode auto only: elk | dagre delegates the connector-graph arrangement to d2's embedded layered engines (offline, deterministic; results grid-snapped). Prefer elk for dense DAGs with heavy fan-in/fan-out — it cuts crossings/tunnels the built-in longest-path solver leaves. Omit for the built-in solver (default, unchanged). The engine uses its own spacing; gap is ignored. On failure the built-in solver runs with a Warning.",
 				"cols":    "grid only; default ceil(sqrt(n))",
 				"gap":     "space between children (ring: hub-to-satellite clearance), in CELLS (1 cell = gridStep, default 40 world units); default 1",
 				"padding": "content inset from the container edge, in cells; defaults to gap",
