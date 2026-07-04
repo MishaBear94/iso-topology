@@ -17,6 +17,7 @@ description matches your task, imitate its structure, then check
 | [`array3d`](../../samples/node/array3d/input.yaml) | (no header comment) |
 | [`circle`](../../samples/node/circle/input.yaml) | circle — the iso sphere: one ball with equator shading and a top label. |
 | [`cloud`](../../samples/node/cloud/input.yaml) | cloud — free-form rounded outline for external systems; no per-face palette. |
+| [`cloud-styled`](../../samples/node/cloud-styled/input.yaml) | cloud-styled — the cloud's style surface: a top-face icon (box-family anchor/scale semantics on the inscribed content rect) plus linear gradients on the … |
 | [`composite`](../../samples/node/composite/input.yaml) | composite — a stat card built from three primitives sharing one bbox. |
 | [`custom-path`](../../samples/node/custom-path/input.yaml) | (no header comment) |
 | [`cylinder`](../../samples/node/cylinder/input.yaml) | cylinder — the database/queue primitive: elliptical top, curved side wall. |

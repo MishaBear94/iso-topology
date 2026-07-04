@@ -1,0 +1,17 @@
+# cloud-styled — the cloud's style surface: a top-face icon (box-family
+# anchor/scale semantics on the inscribed content rect) plus linear gradients
+# on the crown (topGradient) and the wrap-around side band (leftGradient).
+canvas:
+  background: "#F8FAFC"
+
+nodes:
+  scene:
+    shape: cloud
+    label: "SaaS"
+    icon: "iso://glyph/cloud"
+    geom: { w: 220, d: 150, h: 26 }
+    style:
+      palette:
+        topGradient: { from: "#E0F2FE", to: "#BAE6FD", dir: down }
+        leftGradient: { from: "#7DD3FC", to: "#38BDF8" }
+      text: { color: "#0C4A6E" }

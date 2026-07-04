@@ -6,6 +6,28 @@ import (
 	"strings"
 )
 
+// cloudContent* define the inscribed content rectangle of the cloud top face
+// in unit space (ux/uy ∈ 0..1, matching sampleCloudOutline's frame). The rect
+// sits in the cloud's body band, below the two bumps and clear of the concave
+// seam notches where adjacent silhouette circles meet — every corner and edge
+// lies inside the union of the four outline circles, verified by
+// TestCloudContentRectInsideOutline. Icons and labels placed via
+// writeTopLabelAndIconV12 use this rect as their face frame so the box-family
+// anchor/scale semantics (iconScale of min(faceW,faceD), iconAnchor corners,
+// adaptive fit) apply to the cloud unchanged.
+const (
+	cloudContentX0 = 0.17
+	cloudContentY0 = 0.55
+	cloudContentW  = 0.66
+	cloudContentD  = 0.32
+)
+
+// RenderIsoCloud extrudes the classic 2-bump cloud silhouette into the iso
+// top plane. Style surface: TopFill/LeftFill (crown / side band) with
+// TopGradient/LeftGradient linear-gradient overrides, base stroke, and a
+// top-face label + icon (icon uses the box-family anchor/scale semantics on
+// the cloud's inscribed content rect). RightFill and the v3.3 faces map are
+// not used — the cloud has no discrete right face.
 func RenderIsoCloud(o IsoBoxOpts) string {
 	w, d, h, m := o.Width, o.Depth, o.Height, o.Margin
 
@@ -39,6 +61,26 @@ func RenderIsoCloud(o IsoBoxOpts) string {
 	var sb strings.Builder
 	sb.WriteString(svgHeader(W, H))
 	openWrapper(&sb, W, H, o.Background, o.Opacity, o.StrokeDasharray, "")
+
+	// Linear-gradient fills (v1.2 parity with the box family): TopGradient
+	// paints the cloud's crown (top face), LeftGradient paints the wrap-around
+	// side band. Ids are fixed — the composite assembler namespaces every id
+	// per part (namespaceSVGIDs), so fragments can't collide in a scene.
+	topFill, sideFill := o.TopFill, o.LeftFill
+	{
+		var defs strings.Builder
+		if o.TopGradient != nil {
+			emitLinearGradient(&defs, "cloud-grad-top", o.TopGradient)
+			topFill = "url(#cloud-grad-top)"
+		}
+		if o.LeftGradient != nil {
+			emitLinearGradient(&defs, "cloud-grad-side", o.LeftGradient)
+			sideFill = "url(#cloud-grad-side)"
+		}
+		if defs.Len() > 0 {
+			fmt.Fprintf(&sb, `<defs>%s</defs>`, defs.String())
+		}
+	}
 
 	// Per-segment front-facing test, in SCREEN space: a vertical side wall is
 	// visible iff it sits on the lower silhouette — its outward normal points
@@ -99,7 +141,7 @@ func RenderIsoCloud(o IsoBoxOpts) string {
 		}
 		fmt.Fprintf(&sb,
 			`<polygon data-face="side" points="%s" fill="%s" stroke="none"/>`,
-			strings.TrimSpace(ptsSB.String()), escapeAttr(o.LeftFill),
+			strings.TrimSpace(ptsSB.String()), escapeAttr(sideFill),
 		)
 	}
 
@@ -143,32 +185,49 @@ func RenderIsoCloud(o IsoBoxOpts) string {
 	if strings.TrimSpace(o.Stroke) != "" && o.StrokeWidth > 0 {
 		fmt.Fprintf(&sb,
 			`<path data-face="top" d="%s" fill="%s" stroke="%s" stroke-width="%.2f" stroke-linejoin="round"/>`,
-			topPath.String(), escapeAttr(o.TopFill), escapeAttr(o.Stroke), o.StrokeWidth,
+			topPath.String(), escapeAttr(topFill), escapeAttr(o.Stroke), o.StrokeWidth,
 		)
 	} else {
 		fmt.Fprintf(&sb,
 			`<path data-face="top" d="%s" fill="%s" stroke="none"/>`,
-			topPath.String(), escapeAttr(o.TopFill),
+			topPath.String(), escapeAttr(topFill),
 		)
 	}
 
-	// 顶面文字：计算轮廓点的实际重心，以重心为原点调用 writeTopLabelAndIcon，
-	// 使文字精确居中于云朵顶面，而不是假设面填满整个 (w×d) 矩形。
-	var sumLX, sumLY float64
-	for _, p := range outline {
-		sumLX += p[0]
-		sumLY += p[1]
+	if strings.TrimSpace(o.Icon) != "" {
+		// Icon (optionally + label): place both on the inscribed content
+		// rectangle of the top face so the box-family semantics apply — icon
+		// size = iconScale × min(faceW, faceD), anchor/offset honored, and the
+		// adaptive fit keeps icon and label inside the rect (hence inside the
+		// cloud outline). Origin = the rect's local (0,0) corner projected onto
+		// the top plane (z=h → screen y shifted by -h like the top face).
+		ox, oy := project(cloudContentX0*w, cloudContentY0*d, 0)
+		writeTopLabelAndIconV12(
+			&sb,
+			ox+tx, oy+(ty-h), cloudContentW*w, cloudContentD*d,
+			o.Label, o.LabelLines, o.Icon, o.IconScale, o.IconAnchor, o.IconOffX, o.IconOffY,
+			o.FontFamily, o.FontSize, o.FontWeight, o.FontColor,
+		)
+	} else {
+		// 顶面文字：计算轮廓点的实际重心，以重心为原点调用 writeTopLabelAndIcon，
+		// 使文字精确居中于云朵顶面，而不是假设面填满整个 (w×d) 矩形。
+		// (icon 为空时保持这条历史路径，输出与旧版逐字节一致。)
+		var sumLX, sumLY float64
+		for _, p := range outline {
+			sumLX += p[0]
+			sumLY += p[1]
+		}
+		sumLX /= float64(n)
+		sumLY /= float64(n)
+		csx, csy := project(sumLX, sumLY, 0)
+		// faceW=0, faceD=0 → label placed at local (0,0) = centroid in screen space
+		writeTopLabelAndIcon(
+			&sb,
+			csx+tx, csy+(ty-h), 0, 0,
+			o.Label, "", o.IconScale,
+			o.FontFamily, o.FontSize, o.FontWeight, o.FontColor,
+		)
 	}
-	sumLX /= float64(n)
-	sumLY /= float64(n)
-	csx, csy := project(sumLX, sumLY, 0)
-	// faceW=0, faceD=0 → label placed at local (0,0) = centroid in screen space
-	writeTopLabelAndIcon(
-		&sb,
-		csx+tx, csy+(ty-h), 0, 0,
-		o.Label, "", o.IconScale,
-		o.FontFamily, o.FontSize, o.FontWeight, o.FontColor,
-	)
 
 	closeWrapper(&sb)
 	sb.WriteString(`</svg>`)
