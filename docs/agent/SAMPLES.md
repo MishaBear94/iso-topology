@@ -26,6 +26,7 @@ description matches your task, imitate its structure, then check
 | [`hexprism`](../../samples/node/hexprism/input.yaml) | (no header comment) |
 | [`iso-text`](../../samples/node/iso-text/input.yaml) | iso_text — flat text panel (near-zero extrusion); good for titles and captions. |
 | [`person`](../../samples/node/person/input.yaml) | person — human actor: sphere head tangent to a hemispherical dome body. |
+| [`person-effects`](../../samples/node/person-effects/input.yaml) | person-effects — the person shape speaking the box family's style vocabulary: a body gradient (topGradient shades both dome halves; left/ rightGradient … |
 | [`rack`](../../samples/node/rack/input.yaml) | (no header comment) |
 | [`rectangle`](../../samples/node/rectangle/input.yaml) | rectangle — the bread-and-butter iso box: three faces, top label, extrusion h. |
 | [`wedge`](../../samples/node/wedge/input.yaml) | (no header comment) |

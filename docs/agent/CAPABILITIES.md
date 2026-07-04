@@ -41,7 +41,7 @@ override per-part via `geom.h`.
 | **hexprism** | `hexagon` | 0.7 | v3.2 — 6-gon prism: API gateway / middleware semantics |
 | **iso_text** | `text` | 0.3 | flat text panel (low extrusion) |
 | **octprism** | `octprism` | 1.0 | v3.2 — 8-gon prism: firewall (stop-sign) / decision-gate semantics |
-| **person** | `c4-person`, `c4_person`, `person` | 1.2 |  |
+| **person** | `c4-person`, `c4_person`, `person` | 1.2 | human actor: sphere head fused onto a dome torso. Body halves take palette.left/right; palette.leftGradient/rightGradient shade the matching half, palette.topGradient shades BOTH halves as one body gradient (no drawn top face). effects.outline / dropShadow / backglow follow the true head+dome silhouette. style.faces and effects.pattern are ignored (validator warns) |
 | **rack** | `rack` | 1.0 | v3.11 — server rack with slot shelves. params: slots (default 4). Semantic: physical server rack, blade chassis, equipment cabinet. |
 | **rectangle** | `callout`, `class`, `code`, `document`, `hierarchy`, `image`, `package`, `page`, `rectangle`, `sequence-diagram`, `sequence_diagram`, `sql-table`, `sql_table`, `square`, `step` | 1.0 |  |
 | **triprism** | `triprism` | 1.0 | v3.2 — 3-gon prism: alert / one-way fan-out semantics |
