@@ -454,7 +454,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		promFrom := ar.promoteToContainer(c.From, c.To)
 		effFrom[i] = ar.auto(promFrom, c.To)
 		effTo[i] = ar.auto(c.To, promFrom)
-		if c.Routing != "orthogonal" {
+		if c.Routing != "orthogonal" && c.Routing != "orthogonal2" {
 			continue
 		}
 		sWX, sWY, _, ok1 := ar.world(effFrom[i])
@@ -533,6 +533,11 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 	var segRects []screenRect
 	var placedPills []screenRect
 	var drawnLines []drawnLine
+	// v2 router — world polylines of connectors already routed this pass, so
+	// each orthogonal2 route can price crossings against them (the +100
+	// scorecard weight; see inject_router2.go). v1 connectors contribute their
+	// routes too but never read the slice, so the default path is unchanged.
+	var placedRoutes [][][2]float64
 	for ci, c := range conns {
 		connStart[ci] = sb.Len()
 		stroke, width, dash := "#7A8390", 1.4, ""
@@ -563,7 +568,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		// collection can't leak a new attribute into the SVG.
 		var collWorld, collScreen [][2]float64
 		switch c.Routing {
-		case "orthogonal":
+		case "orthogonal", "orthogonal2":
 			// Anchor-aware L/Z in the iso world ground plane.
 			//
 			// Each endpoint first walks `stub` along its face normal (so the
@@ -609,7 +614,15 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			// the normal: (-sdy, sdx). Channel width is fixed in world
 			// units; stays well inside the face span for the default
 			// 70..200-wide parts used in the demos.
-			const channelW = 14.0
+			// v1 keeps the historical fixed 14-unit channel; orthogonal2
+			// adapts the width to each endpoint's own face span (see
+			// router2ChannelW) so a fan-out neither overflows a narrow face
+			// nor bunches every exit at the middle of a wide one.
+			sChannelW, tChannelW := 14.0, 14.0
+			if c.Routing == "orthogonal2" {
+				sChannelW = router2ChannelW(ar, effFrom[ci], srcSideCount[ar.sideKey(effFrom[ci])])
+				tChannelW = router2ChannelW(ar, effTo[ci], tgtSideCount[ar.sideKey(effTo[ci])])
+			}
 			var sStagger, tStagger float64
 			// Collinear edges keep stagger 0 — shifting them would
 			// break the single-segment route the user laid out for.
@@ -620,8 +633,8 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				tN, tIdx := tgtSideCount[tgtKey], tgtSideIdx[tgtKey]
 				srcSideIdx[srcKey]++
 				tgtSideIdx[tgtKey]++
-				sStagger = (float64(sIdx) - float64(sN-1)/2) * channelW
-				tStagger = (float64(tIdx) - float64(tN-1)/2) * channelW
+				sStagger = (float64(sIdx) - float64(sN-1)/2) * sChannelW
+				tStagger = (float64(tIdx) - float64(tN-1)/2) * tChannelW
 			}
 			sTanX, sTanY := -sdy, sdx
 			tTanX, tTanY := -tdy, tdx
@@ -651,6 +664,22 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			const stub = 24.0
 			sStubX, sStubY := sWX+sdx*stub, sWY+sdy*stub
 			tStubX, tStubY := tWX+tdx*stub, tWY+tdy*stub
+
+			// orthogonal2 (opt-in v2): search a multi-segment obstacle- and
+			// crossing-aware route between the two stub points (see
+			// inject_router2.go). Explicit waypoints / bend keep their
+			// existing override semantics, so v2 only replaces the AUTO
+			// route; nil (degenerate anchors, oversized grid, unreachable)
+			// falls back to the v1 elbow route below.
+			var v2Pts [][2]float64
+			if c.Routing == "orthogonal2" && c.Bend == nil && len(c.Waypoints) == 0 {
+				fromID2, _ := ar.parse(effFrom[ci])
+				toID2, _ := ar.parse(effTo[ci])
+				v2Pts = route(
+					routerAnchor{ID: fromID2, X: sStubX, Y: sStubY, DX: sdx, DY: sdy, Z: srcZ},
+					routerAnchor{ID: toID2, X: tStubX, Y: tStubY, DX: tdx, DY: tdy, Z: tgtZ},
+					obstacles, placedRoutes)
+			}
 
 			var worldPts [][3]float64
 			xFirst := math.Abs(sdx) > math.Abs(sdy)
@@ -714,7 +743,22 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				}
 				return pts
 			}
-			if xFirst {
+			if len(v2Pts) >= 2 {
+				// v2 route found: thread the searched waypoints at routeZ
+				// through the same anchor/stub/riser scaffolding v1 uses
+				// (v2Pts[0] is the source stub itself — the riser helper
+				// already emits it at routeZ when the endpoint floats).
+				worldPts = [][3]float64{
+					{sWX, sWY, srcZ},
+					{sStubX, sStubY, srcZ},
+				}
+				worldPts = appendRiserSrc(worldPts)
+				for _, p := range v2Pts[1:] {
+					worldPts = append(worldPts, [3]float64{p[0], p[1], routeZ})
+				}
+				worldPts = appendRiserTgt(worldPts)
+				worldPts = append(worldPts, [3]float64{tWX, tWY, tgtZ})
+			} else if xFirst {
 				// Source exits along world x → walk x then y.
 				worldPts = [][3]float64{
 					{sWX, sWY, srcZ},
@@ -901,6 +945,14 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				collWorld = [][2]float64{{sWX, sWY}, {tWX, tWY}}
 				collScreen = [][2]float64{{x1, y1}, {x2, y2}}
 			}
+		}
+
+		// Record the finished world polyline (orthogonal family only — the
+		// other routings never fill routeWorld) so later orthogonal2 routes
+		// can price crossings against every edge already placed. Pre-clip
+		// coords, matching the data-route frame the evaluator scores.
+		if len(routeWorld) >= 2 {
+			placedRoutes = append(placedRoutes, routeWorld)
 		}
 
 		// v3.2.2 — terminal despike: drop a sub-7px final segment that
