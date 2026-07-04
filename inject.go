@@ -12,10 +12,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/MarkovWangRR/iso-topology/iso25d"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/MarkovWangRR/iso-topology/iso25d"
+	"github.com/MarkovWangRR/iso-topology/textmetrics"
 )
 
 // scaleDashForWidth keeps a dashed/dotted connector legible at thick strokes.
@@ -189,7 +191,12 @@ func injectScreenLabels(svg string, infos []partInfo, extraObstacles []screenRec
 			weight = "600"
 		}
 		fontSize := p.labelFontSize
-		boxW := float64(len(text))*fontSize*0.58 + 16
+		// Surgical CJK fix: wide runes advance one em (BYTE counting
+		// inflated CJK labels ~3× — each ideograph is 3 bytes in
+		// UTF-8), while narrow runes keep the legacy per-byte advance
+		// so every frozen non-CJK golden (incl. em-dash / middle-dot
+		// labels) stays byte-identical.
+		boxW := textmetrics.TextPxWideBytes(text, fontSize, textmetrics.NarrowScreenLabel) + 16
 		boxH := fontSize + 10
 
 		// Own silhouette doesn't block the label hanging off its edge —
@@ -1043,7 +1050,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			if lfs <= 0 {
 				lfs = 13
 			}
-			textW := float64(len([]rune(c.Label)))*lfs*0.64 + 12
+			textW := textWidthPx(c.Label, lfs, textmetrics.NarrowConnectorLabel) + 12
 
 			type seg struct{ mx, my, length, fromMid float64 }
 			total := 0.0
@@ -1217,13 +1224,10 @@ func injectAnnotations(svg string, anns []*Annotation, infos []partInfo, extraOb
 		for _, l := range lines {
 			w := 0.0
 			for _, rn := range l {
-				switch {
-				case rn >= 0x2E80: // CJK and beyond
-					w += 1.0
-				case rn >= 0x2500 && rn <= 0x257F: // box-drawing rules
-					w += 0.7
-				default:
-					w += 0.58
+				if rn >= 0x2500 && rn <= 0x257F { // box-drawing rules
+					w += textmetrics.BoxDrawingEm
+				} else {
+					w += textmetrics.RuneEm(rn, textmetrics.NarrowAnnotation)
 				}
 			}
 			if w > widest {
