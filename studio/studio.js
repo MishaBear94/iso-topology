@@ -1524,6 +1524,11 @@ window.addEventListener('mouseup',e=>{
   if(kind==='edge') removeSegHandles(d.el);
   const wd=screenToWorldDelta((e.clientX-d.x)/scale,(e.clientY-d.y)/scale);
   if(Math.abs(wd[0])<=2 && Math.abs(wd[1])<=2) return;   // below drag threshold
+  // A completed drag's trailing click lands on the re-rendered canvas (the
+  // node under the cursor was just replaced), which would clearSelection()
+  // and force a re-marquee before every subsequent group move. Same guard
+  // the marquee uses: swallow exactly one trailing click.
+  marqueeJustEnded=true;
   if(kind==='edge' && d.wp){
     // interior corners (drop the docked endpoints) become the waypoint list
     const interior=d.wp.slice(1,d.wp.length-1).map(w=>[Math.round(w.wx),Math.round(w.wy)]);
@@ -1682,6 +1687,11 @@ viewport.addEventListener('wheel',e=>{
    plain click      = clear pin + selection · double-click = reset view
    Node/edge/handle mousedowns stopPropagation, so these fire on bare canvas only. */
 let drag=null, marquee=null, marqueeJustEnded=false;
+// The swallow-one-click guard protects against the TRAILING click of the
+// gesture that armed it — but that click can be eaten by a node handler's
+// stopPropagation and never reach the viewport. A fresh mousedown means a
+// NEW user gesture, so any stale guard must die with it.
+window.addEventListener('mousedown',()=>{marqueeJustEnded=false;},true);
 viewport.addEventListener('mousedown',e=>{
   if(e.button===0 && !e.altKey){
     marquee={x0:e.clientX,y0:e.clientY,el:null,rect:null,add:e.shiftKey};
@@ -1730,8 +1740,12 @@ window.addEventListener('mouseup',e=>{
 });
 viewport.addEventListener('dblclick',resetView);
 viewport.addEventListener('click',e=>{
+  // Consume the swallow-one-click guard FIRST, whatever the click landed on:
+  // a marquee/drag whose trailing click hits a node would otherwise leave the
+  // flag armed and silently eat the user's next real canvas click.
+  const swallow=marqueeJustEnded; marqueeJustEnded=false;
   if(e.target.closest && e.target.closest('g[data-part-id]')) return;
-  if(marqueeJustEnded){marqueeJustEnded=false;return;}
+  if(swallow) return;
   clearSelection();
   if(pinId!==null||pinCi!==null){pinId=null;pinCi=null;glowOnly(null);glowEdge(null);paint(null);}
 });
