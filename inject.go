@@ -347,7 +347,9 @@ func collectDescendantObstacles(parts []*CompositePart, baseX, baseY, baseZ floa
 // can consume structured routes instead of regexing data-route out of the
 // SVG. Collection is pure observation — a non-nil collector never changes a
 // single output byte (straight edges, by contract, still emit NO data-route).
-func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo, sceneParts []*CompositePart, nSubstrates int, rc *routeCollector) (string, []screenRect) {
+// depthSort is the WS-A canvas.depthSort flag: routes are layered by endpoint
+// depth instead of pinned under all bodies.
+func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo, sceneParts []*CompositePart, nSubstrates int, rc *routeCollector, depthSort bool) (string, []screenRect) {
 	project := projectIso
 	tx, ty := partsScreenOrigin(infos)
 
@@ -511,7 +513,12 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 
 	var sb strings.Builder
 	var overlay strings.Builder
-	sb.WriteString(`<g data-layer="connectors">`)
+	// v5.2 — sb holds ONLY the route markup (no <g data-layer> wrapper);
+	// connStart[ci] records where connector ci's markup begins so the
+	// depthSort mode can re-bucket individual routes into depth layers.
+	// The default mode wraps the whole builder in the single legacy
+	// layer, producing byte-identical output to the pre-v5.2 renderer.
+	connStart := make([]int, len(conns)+1)
 
 	// Obstacles for pill placement + segment rects handed back to later
 	// layers. Substrate slabs are not pill obstacles — a pill ON a slab
@@ -527,6 +534,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 	var placedPills []screenRect
 	var drawnLines []drawnLine
 	for ci, c := range conns {
+		connStart[ci] = sb.Len()
 		stroke, width, dash := "#7A8390", 1.4, ""
 		if c.Stroke != nil {
 			if c.Stroke.Color != "" {
@@ -1139,7 +1147,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			)
 		}
 	}
-	sb.WriteString(`</g>`)
+	connStart[len(conns)] = sb.Len()
 
 	// Grow the viewBox to cover every connector waypoint (plus a pad
 	// for stroke width + arrowheads) BEFORE splicing the layer in, so
@@ -1158,23 +1166,77 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 	// paint under every BODY part — iso silhouettes occlude crossing
 	// lines — but group slabs no longer swallow them. With nSubstrates ==
 	// 0 this degrades to the v1.6.5 behaviour (just after the <svg> tag).
-	start := strings.Index(svg, "<svg")
-	if start < 0 {
-		return svg, segRects
-	}
-	tagEnd := strings.Index(svg[start:], ">")
-	if tagEnd < 0 {
-		return svg, segRects
-	}
-	insertAt := start + tagEnd + 1
-	for k := 0; k < nSubstrates; k++ {
-		end, ok := partGroupEnd(svg, insertAt)
-		if !ok {
-			break
+	//
+	// v5.2 — canvas.depthSort layers routes by endpoint depth instead:
+	// each connector is spliced just BELOW its back-most endpoint part
+	// (paint index min(from, to) in the depth-sorted order, clamped to
+	// stay above the substrate block). Parts strictly behind both
+	// endpoints can no longer swallow a route between two foreground
+	// parts, while parts in front still occlude it — the 2.5D depth cue.
+	spliceAfterParts := func(svg, layer string, nParts int) string {
+		start := strings.Index(svg, "<svg")
+		if start < 0 {
+			return svg
 		}
-		insertAt = end
+		tagEnd := strings.Index(svg[start:], ">")
+		if tagEnd < 0 {
+			return svg
+		}
+		insertAt := start + tagEnd + 1
+		for k := 0; k < nParts; k++ {
+			end, ok := partGroupEnd(svg, insertAt)
+			if !ok {
+				break
+			}
+			insertAt = end
+		}
+		return svg[:insertAt] + layer + svg[insertAt:]
 	}
-	svg = svg[:insertAt] + sb.String() + svg[insertAt:]
+	if !depthSort {
+		svg = spliceAfterParts(svg, `<g data-layer="connectors">`+sb.String()+`</g>`, nSubstrates)
+	} else {
+		idxByID := make(map[string]int, len(infos))
+		for i, p := range infos {
+			if p.id != "" {
+				idxByID[p.id] = i
+			}
+		}
+		layerOf := func(ci int) int {
+			fi, okF := idxByID[connectorTarget(effFrom[ci])]
+			ti, okT := idxByID[connectorTarget(effTo[ci])]
+			if !okF || !okT {
+				return nSubstrates
+			}
+			k := fi
+			if ti < k {
+				k = ti
+			}
+			if k < nSubstrates {
+				k = nSubstrates
+			}
+			return k
+		}
+		routes := sb.String()
+		layers := map[int]string{nSubstrates: ""} // base layer always exists (Studio parity)
+		for ci := range conns {
+			m := routes[connStart[ci]:connStart[ci+1]]
+			if m == "" {
+				continue
+			}
+			layers[layerOf(ci)] += m
+		}
+		ks := make([]int, 0, len(layers))
+		for k := range layers {
+			ks = append(ks, k)
+		}
+		sort.Ints(ks)
+		// Each splice recounts <g data-part=…> groups from the top, and a
+		// route layer contains none, so earlier splices never skew later
+		// insertion points.
+		for _, k := range ks {
+			svg = spliceAfterParts(svg, `<g data-layer="connectors">`+layers[k]+`</g>`, k)
+		}
+	}
 
 	// Arrowheads and label pills go in a top overlay so a tip landing on
 	// a part's projection (occluded entry face) stays visible.

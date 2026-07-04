@@ -571,6 +571,15 @@ type Canvas struct {
 	// match Mac internal displays. Set to -1 to disable (tight crop).
 	// Example: 1.6 = 16:10, 1.7778 = 16:9, 1.5 = 3:2.
 	AspectRatio float64 `yaml:"aspectRatio,omitempty" json:"aspectRatio,omitempty"`
+	// DepthSort (v5.2) enables true painter's-algorithm ordering: lowered
+	// parts are stably sorted back-to-front by projected world depth
+	// (corner sum x+y+z along the iso view axis), merged ACROSS groups,
+	// so paint order no longer follows author/source order. Connector
+	// routes are layered by their endpoints' depth instead of being fixed
+	// under every body. The substrate/platform partition is preserved
+	// (group slabs always paint at the very back). Default false keeps
+	// the legacy author-order painting byte-for-byte.
+	DepthSort bool `yaml:"depthSort,omitempty" json:"depthSort,omitempty"`
 }
 
 // Annotation is a screen-space callout pinned to a composite part. It

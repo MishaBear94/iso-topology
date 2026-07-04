@@ -1,0 +1,71 @@
+# depthSort acceptance 1 — cross-group projection overlap.
+#
+# The author writes the FRONT group (serving) FIRST and the BACK group
+# (data) LAST. The back group's tall warehouse projects over the front
+# group's api box on screen. Under the legacy author-order painter this
+# would paint the BACK warehouse over the FRONT api (wrong stacking);
+# canvas.depthSort: true merges both groups into one back-to-front
+# order, so the golden shows warehouse/db painted before api/cache
+# regardless of source order.
+canvas:
+  background: "#F7F9FC"
+  grid: iso
+  gridColor: "#E3E8F0"
+  gridStep: 40
+  depthSort: true
+nodes:
+  scene:
+    shape: composite
+    parts:
+      - id: serving          # front zone, written first on purpose
+        shape: group
+        label: Serving
+        geom: {w: 320, d: 200, h: 24}
+        offset: {wx: 260, wy: 190}
+        style:
+          palette: {top: "#EAF1FE", left: "#C7D7F2", right: "#D8E4F8"}
+          stroke: {color: "#7C97C9", width: 1}
+        parts:
+          - id: api
+            shape: rectangle
+            label: API
+            geom: {w: 120, d: 100, h: 60}
+            offset: {wx: 30, wy: 50}
+            style:
+              palette: {top: "#FFFFFF", left: "#C9D1E5", right: "#D9DFF0"}
+              stroke: {color: "#6B7A99", width: 1}
+          - id: cache
+            shape: rectangle
+            label: Cache
+            geom: {w: 100, d: 100, h: 50}
+            offset: {wx: 180, wy: 60}
+            style:
+              palette: {top: "#FFFFFF", left: "#C9D1E5", right: "#D9DFF0"}
+              stroke: {color: "#6B7A99", width: 1}
+      - id: data             # back zone, written last on purpose
+        shape: group
+        label: Data
+        geom: {w: 320, d: 180, h: 24}
+        offset: {wx: 120, wy: 0}
+        style:
+          palette: {top: "#F0ECFA", left: "#D2C9EC", right: "#E1DAF4"}
+          stroke: {color: "#9184C4", width: 1}
+        parts:
+          - id: warehouse
+            shape: rectangle
+            label: Warehouse
+            geom: {w: 140, d: 120, h: 190}
+            offset: {wx: 40, wy: 30}
+            style:
+              palette: {top: "#FFFFFF", left: "#CBC2E8", right: "#DDD5F1"}
+              stroke: {color: "#8578B8", width: 1}
+          - id: db
+            shape: cylinder
+            label: DB
+            geom: {w: 100, d: 100, h: 90}
+            offset: {wx: 200, wy: 40}
+            style:
+              palette: {top: "#FFFFFF", left: "#CBC2E8", right: "#DDD5F1"}
+              stroke: {color: "#8578B8", width: 1}
+    connectors:
+      - {from: api, to: warehouse, routing: orthogonal, arrow: triangle, label: query}

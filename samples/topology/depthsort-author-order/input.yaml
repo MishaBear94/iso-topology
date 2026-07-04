@@ -1,0 +1,35 @@
+# depthSort acceptance 2 — author order deliberately reversed.
+#
+# Three boxes march up the depth diagonal; the author lists them
+# FRONT-most first and BACK-most last (the exact order that breaks the
+# legacy author-order painter: the tall back core would paint OVER the
+# mid and edge boxes it should sit behind). With canvas.depthSort: true
+# the golden paints core → mid → edge, back-to-front, proving source
+# order no longer decides occlusion.
+canvas:
+  background: "#FBFBFD"
+  grid: dots
+  gridColor: "#DDE3EC"
+  gridStep: 40
+  depthSort: true
+nodes:
+  scene:
+    shape: composite
+    parts:
+      - id: edge             # FRONT-most, written first
+        shape: rectangle
+        label: Edge
+        geom: {w: 120, d: 100, h: 60}
+        offset: {wx: 360, wy: 240}
+      - id: mid              # middle
+        shape: rectangle
+        label: Mid
+        geom: {w: 120, d: 100, h: 90}
+        offset: {wx: 200, wy: 60}
+      - id: core             # BACK-most, written last
+        shape: rectangle
+        label: Core
+        geom: {w: 120, d: 100, h: 150}
+        offset: {wx: 20, wy: 20}
+    connectors:
+      - {from: edge, to: core, routing: orthogonal, arrow: triangle, label: sync}

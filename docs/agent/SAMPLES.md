@@ -38,6 +38,8 @@ description matches your task, imitate its structure, then check
 | [`auto-flow`](../../samples/topology/auto-flow/input.yaml) | (no header comment) |
 | [`clickhouse-hub`](../../samples/topology/clickhouse-hub/input.yaml) | ClickHouse — real-time data warehouse & database, hub-and-spoke ecosystem map. |
 | [`data-fabric`](../../samples/topology/data-fabric/input.yaml) | data-fabric — connector-driven AUTO layout (v4.2). |
+| [`depthsort-author-order`](../../samples/topology/depthsort-author-order/input.yaml) | depthSort acceptance 2 — author order deliberately reversed. |
+| [`depthsort-cross-group`](../../samples/topology/depthsort-cross-group/input.yaml) | depthSort acceptance 1 — cross-group projection overlap. |
 | [`devtool-pipeline`](../../samples/topology/devtool-pipeline/input.yaml) | devtool-pipeline — CI/CD neon. |
 | [`duckdb-handdrawn`](../../samples/topology/duckdb-handdrawn/input.yaml) | DuckDB — classic hand-drawn data architecture (sketch / whiteboard feel). |
 | [`lakehouse-agent`](../../samples/topology/lakehouse-agent/input.yaml) | lakehouse-agent — Databricks Lakehouse + LLM agent application architecture. |

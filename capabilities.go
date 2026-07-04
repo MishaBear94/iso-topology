@@ -285,6 +285,7 @@ func buildPrimitiveCaps() []PrimitiveCap {
 				"gridStep":   "tile size in world units (default 40)",
 				"padding":    "v3.1 — uniform breathing margin in px around the final composition; use 40-80 for sparse hero shots",
 				"projection": "v0.8 — iso (default) | top. top renders a flat top-down plan view (footprints + orthogonal edges, height dropped) for reading the layout/flow",
+				"depthSort":  "v5.2 — true / false (default false). Painter's-algorithm depth sort: parts paint back-to-front by world depth (corner sum x+y+z), merged across groups, instead of author order; connector routes layer by their endpoints' depth instead of sitting under every body. Group slabs/platforms still paint at the very back. Turn on when parts from different groups overlap in projection or when author order would paint a back part over a front one. Iso projection only (no effect with projection: top).",
 			},
 		},
 		{
