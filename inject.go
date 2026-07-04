@@ -191,10 +191,12 @@ func injectScreenLabels(svg string, infos []partInfo, extraObstacles []screenRec
 			weight = "600"
 		}
 		fontSize := p.labelFontSize
-		// Rune-aware width (CJK = one em, latin = the screen-label
-		// factor). Counting BYTES here inflated CJK labels ~3× — each
-		// ideograph is 3 bytes in UTF-8.
-		boxW := textWidthPx(text, fontSize, textmetrics.NarrowScreenLabel) + 16
+		// Surgical CJK fix: wide runes advance one em (BYTE counting
+		// inflated CJK labels ~3× — each ideograph is 3 bytes in
+		// UTF-8), while narrow runes keep the legacy per-byte advance
+		// so every frozen non-CJK golden (incl. em-dash / middle-dot
+		// labels) stays byte-identical.
+		boxW := textmetrics.TextPxWideBytes(text, fontSize, textmetrics.NarrowScreenLabel) + 16
 		boxH := fontSize + 10
 
 		// Own silhouette doesn't block the label hanging off its edge —

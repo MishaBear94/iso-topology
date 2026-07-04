@@ -22,8 +22,11 @@ func textWidthPx(s string, fontSize, narrow float64) float64 {
 }
 
 // Validator label-width model (validate_visual.go): the legacy check
-// assumed 7px per character at the default label font. Kept for narrow
-// runes; wide runes get the full-em equivalent (≈7/0.58, rounded).
+// assumed 7px per BYTE (len(label)*7) at the default label font. That
+// per-byte advance is kept for narrow runes — so ASCII and multi-byte
+// narrow glyphs (em-dash, middle dot, accents) estimate exactly as
+// before — while wide (CJK etc.) runes get the full-em equivalent
+// (≈7/0.58, rounded) instead of 3 bytes · 7 = 21px.
 const (
 	validateNarrowPx = 7
 	validateWidePx   = 12
@@ -32,6 +35,6 @@ const (
 // estimateLabelPx is the validator's truncation-risk width estimate
 // for a part label, in screen px.
 func estimateLabelPx(label string) int {
-	narrow, wide := textmetrics.Count(label)
-	return narrow*validateNarrowPx + wide*validateWidePx
+	narrowBytes, wide := textmetrics.CountWideBytes(label)
+	return narrowBytes*validateNarrowPx + wide*validateWidePx
 }

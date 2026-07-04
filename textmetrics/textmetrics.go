@@ -13,12 +13,17 @@
 //     em (WideEm);
 //   - every other rune advances the caller's narrow factor (em units).
 //
-// Width is a function of RUNES, never of bytes: CJK is 3 bytes per
-// glyph in UTF-8, so byte counting inflates Chinese labels ~3×.
+// TextPx/RuneEm count RUNES, never bytes: CJK is 3 bytes per glyph in
+// UTF-8, so byte counting inflates Chinese labels ~3×. Two legacy
+// byte-model variants (TextPxBytes, TextPxWideBytes) survive where
+// frozen goldens depend, byte-for-byte, on the historical formulas —
+// see their block comment below.
 //
 // This package sits below both the root isotopo package and iso25d so
 // geometry code and validators share one metric.
 package textmetrics
+
+import "unicode/utf8"
 
 // WideEm is the advance of a wide (full-width) rune, in em units.
 const WideEm = 1.0
@@ -108,4 +113,56 @@ func TextPx(s string, fontSize, narrow float64) float64 {
 // TextEm is TextPx at font size 1 — the width of s in em units.
 func TextEm(s string, narrow float64) float64 {
 	return TextPx(s, 1, narrow)
+}
+
+// ─── Legacy byte-model widths ────────────────────────────────────────
+//
+// Two flavors of the historical len(string)-based formula survive on
+// purpose, because golden SVGs are frozen byte-for-byte on them:
+//
+//   - TextPxBytes reproduces the pure legacy model exactly. Its CJK
+//     inflation (~3× — 3 bytes per ideograph) is a KNOWN bug at its
+//     remaining call site (iso25d/shape_text.go), but fixing it there
+//     moves frozen goldens, so that fix is deferred to an explicit
+//     golden-regeneration pass.
+//
+//   - TextPxWideBytes is the surgical CJK fix: wide runes advance one
+//     em, while narrow runes keep the legacy per-BYTE advance. Result:
+//     the CJK inflation is gone, yet every width the old formula
+//     produced for text without wide runes — including multi-byte
+//     narrow glyphs such as em-dash U+2014 (3 bytes) and middle dot
+//     U+00B7 (2 bytes) — stays bit-identical, so existing goldens do
+//     not move.
+
+// TextPxBytes is the legacy byte-count width estimate:
+// float64(len(s)) * fontSize * factor, verbatim.
+func TextPxBytes(s string, fontSize, factor float64) float64 {
+	return float64(len(s)) * fontSize * factor
+}
+
+// CountWideBytes splits s into the number of UTF-8 bytes occupied by
+// narrow runes and the number of wide runes.
+func CountWideBytes(s string) (narrowBytes, wide int) {
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if IsWide(r) {
+			wide++
+		} else {
+			narrowBytes += size
+		}
+		i += size
+	}
+	return narrowBytes, wide
+}
+
+// TextPxWideBytes estimates the painted width of s at fontSize with
+// wide runes advancing WideEm and narrow runes advancing narrow em PER
+// BYTE (the legacy model). See the block comment above for why.
+//
+// The float expression keeps the float64(count)*fontSize*factor
+// multiplication order: for strings with no wide runes it is
+// bit-identical to the legacy float64(len(s))*fontSize*factor.
+func TextPxWideBytes(s string, fontSize, narrow float64) float64 {
+	nb, nw := CountWideBytes(s)
+	return float64(nb)*fontSize*narrow + float64(nw)*fontSize*WideEm
 }

@@ -36,11 +36,15 @@ func RenderIsoText(o IsoBoxOpts) string {
 		m = 12
 	}
 
-	// Approximate text width: rune-aware — CJK a full em, latin the
-	// iso-text fudge factor (Inter-ish). Add half-em of padding so the
-	// trailing glyph isn't flush against the bbox edge after the
+	// Approximate text width: monospace fudge factor (Inter-ish)
+	// applied to the UTF-8 BYTE length — the legacy model, kept
+	// bit-for-bit because frozen goldens depend on it (em-dash and
+	// middle-dot labels are multi-byte). Yes, this inflates CJK ~3×;
+	// switching this site to the rune-aware TextPx is deferred to an
+	// explicit golden-regeneration pass. Add half-em of padding so
+	// the trailing glyph isn't flush against the bbox edge after the
 	// matrix tilt.
-	textW := textmetrics.TextPx(text, fontSize, textmetrics.NarrowIsoText) + fontSize*0.5
+	textW := textmetrics.TextPxBytes(text, fontSize, textmetrics.NarrowIsoText) + fontSize*0.5
 
 	// Local text bbox is (0..textW, −fontSize..0). After the iso
 	// matrix(cos30 sin30 -cos30 sin30 originX originY), each local
