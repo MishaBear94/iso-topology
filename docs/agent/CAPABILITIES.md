@@ -38,13 +38,13 @@ override per-part via `geom.h`.
 | **custom_path** | `custom_path` | 1.0 | v3.10 — arbitrary polygon base extruded vertically. Provide path: in geom.params (M/L/Z SVG commands). Semantic: any brand or domain-specific shape. |
 | **cylinder** | `cylinder`, `queue`, `stored-data`, `stored_data` | 1.0 |  |
 | **group** | `group` | 1.0 | v2 primitive — translucent labeled substrate wrapping nested parts |
-| **hexprism** | `hexagon` | 0.7 | v3.2 — 6-gon prism: API gateway / middleware semantics |
+| **hexprism** | `hexagon` | 0.7 | v3.2 — 6-gon prism: API gateway / middleware semantics. v3.12 — palette left/rightGradient shade the visible walls by normal (box left/right semantics); projected face fills pin to each wall's iso plane |
 | **iso_text** | `text` | 0.3 | flat text panel (low extrusion) |
-| **octprism** | `octprism` | 1.0 | v3.2 — 8-gon prism: firewall (stop-sign) / decision-gate semantics |
+| **octprism** | `octprism` | 1.0 | v3.2 — 8-gon prism: firewall (stop-sign) / decision-gate semantics. v3.12 — palette left/rightGradient shade the visible walls by normal (box left/right semantics); projected face fills pin to each wall's iso plane |
 | **person** | `c4-person`, `c4_person`, `person` | 1.2 |  |
 | **rack** | `rack` | 1.0 | v3.11 — server rack with slot shelves. params: slots (default 4). Semantic: physical server rack, blade chassis, equipment cabinet. |
 | **rectangle** | `callout`, `class`, `code`, `document`, `hierarchy`, `image`, `package`, `page`, `rectangle`, `sequence-diagram`, `sequence_diagram`, `sql-table`, `sql_table`, `square`, `step` | 1.0 |  |
-| **triprism** | `triprism` | 1.0 | v3.2 — 3-gon prism: alert / one-way fan-out semantics |
+| **triprism** | `triprism` | 1.0 | v3.2 — 3-gon prism: alert / one-way fan-out semantics. v3.12 — palette left/rightGradient shade the visible walls by normal (box left/right semantics); projected face fills pin to each wall's iso plane |
 | **wedge** | `wedge` | 0.7 | v3.10 — sloped prism: back edge raised to full height, front edge at z=0. Semantic: ramp, data ingestion pipeline, traffic escalation. |
 
 ## Composition primitives
@@ -199,9 +199,9 @@ Every field under each `style.*` sub-block.
 
 | Block | Fields |
 |---|---|
-| `palette` | `top`, `left`, `right`, `topGradient {from, to, dir}`, `leftGradient {from, to, dir}`, `rightGradient {from, to, dir}` |
+| `palette` | `top`, `left`, `right`, `topGradient {from, to, dir}`, `leftGradient {from, to, dir}`, `rightGradient {from, to, dir}`, `note: on prisms (v3.12) left/rightGradient shade the visible side walls by normal dominance — +x-facing walls take right, +y-facing walls take left, matching the box's two-wall semantics` |
 | `stroke` | `color`, `width`, `dash` |
-| `faces (v3.3)` | `map of face name → {fill, strokes}; names: top|left|right (box family), top|side0..sideN-1 (prisms), "*" wildcard; outranks palette`, `fill {kind: solid|linearGradient|radialGradient|pattern, color, stops: [{offset 0..1, color}], angle (linear, degrees), cx/cy (radial 0..1), pattern {kind: hatch|dots, color, spacing, angle, projected}}`, `projected: true pins the pattern tile to the face's iso plane instead of screen space`, `strokes: [{color, width, dash, opacity}] — multiple re-traces per face, list order = paint order (put thin highlight lines after wide outlines)`, `note: a pattern fill REPLACES the base fill (transparent tile background); supported on the box family, prisms, and cylinders (top/left/right) — cloud/person/sphere keep palette only for now` |
+| `faces (v3.3)` | `map of face name → {fill, strokes}; names: top|left|right (box family), top|side0..sideN-1 (prisms), "*" wildcard; outranks palette`, `fill {kind: solid|linearGradient|radialGradient|pattern, color, stops: [{offset 0..1, color}], angle (linear, degrees), cx/cy (radial 0..1), pattern {kind: hatch|dots, color, spacing, angle, projected}}`, `projected: true pins the pattern tile to the face's iso plane instead of screen space — on prisms (v3.12) each side0..sideN-1 wall gets its own edge-aligned plane matrix, so hatch/dots hug every wall, not just box left/right`, `strokes: [{color, width, dash, opacity}] — multiple re-traces per face, list order = paint order (put thin highlight lines after wide outlines)`, `note: a pattern fill REPLACES the base fill (transparent tile background); supported on the box family, prisms, and cylinders (top/left/right) — cloud/person/sphere keep palette only for now` |
 | `text` | `family`, `size (a MAXIMUM — top-face labels auto-wrap at word boundaries and auto-shrink so they never overflow the face; icons are clamped to the face too)`, `weight`, `color`, `orient`, `boxBg`, `boxBorder` |
 | `effects` | `opacity`, `margin`, `cornerRadius`, `dropShadow {dx, dy, blur, color}`, `backglow {color, radius, opacity}`, `blur (v3.7) — gaussian stdDev in px over the whole part; fog / ghost / de-emphasized layers`, `outline {color, width, dash, opacity} (v3.8) — accent ring along the part's full silhouette (selection / emphasis), distinct from per-face stroke; hugs the true outline of every shape`, `pattern {kind: hatch|dots, color, spacing, angle}`, `wireframe (bool — line-art: strokes only, no fills; ghost parts are exempt from overlap warnings)`, `grain {intensity 0..1, scale} (film-grain noise on the faces)`, `faceSplit (bool — rounded boxes only: split the single wrap-around side band into independent left/right faces so a rounded cube shades per-face like a sharp one; needs cornerRadius>0, no-op otherwise)` |
 

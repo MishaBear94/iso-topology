@@ -73,10 +73,43 @@ func sideMatrix(name string) string {
 	return ""
 }
 
+// SideMatrixForEdge is sideMatrix generalized to ANY vertical wall: the
+// patternTransform that pins a tile to the wall extruded from a ground
+// edge running along world direction (ex, ey) (need not be normalized).
+// The tile's u axis follows the projected edge, v follows world z — the
+// box left/right matrices are exactly the (1,0) / (0,1) special cases.
+// Used by the prism family, whose side0..sideN-1 wall orientations are
+// not derivable from the face name alone.
+func SideMatrixForEdge(ex, ey float64) string {
+	l := math.Hypot(ex, ey)
+	if l == 0 {
+		return ""
+	}
+	ex, ey = ex/l, ey/l
+	ux := (ex - ey) * cos30
+	uy := (ex + ey) * sin30
+	if ux < 0 || (ux == 0 && uy < 0) {
+		// Keep u pointing screen-right (the box convention), so the same
+		// wall gets the same tiling regardless of base winding. 0-x (not
+		// -x) so a flipped 0 never prints as "-0.0000".
+		ux, uy = 0-ux, 0-uy
+	}
+	return fmt.Sprintf("matrix(%.4f %.4f 0 1 0 0)", ux, uy)
+}
+
 // emitFaceFill writes any defs the fill needs and returns the fill ref.
 // Def ids are deterministic per (prefix, face) — callers namespace per
 // part via the usual composite id prefixing.
 func emitFaceFill(defs *strings.Builder, prefix, face string, f *FaceFill) string {
+	return emitFaceFillProjected(defs, prefix, face, f, "")
+}
+
+// emitFaceFillProjected is emitFaceFill with an explicit pin-to-plane
+// matrix for Projected fills. Shapes whose wall orientation isn't fixed
+// by the face NAME (prism sideK) pass the SideMatrixForEdge result;
+// empty keeps the name-based box lookup (left/right) → top-plane
+// fallback, byte-identical to the historical behavior.
+func emitFaceFillProjected(defs *strings.Builder, prefix, face string, f *FaceFill, wallTF string) string {
 	switch f.Kind {
 	case "", "solid":
 		if f.Color != "" {
@@ -115,7 +148,9 @@ func emitFaceFill(defs *strings.Builder, prefix, face string, f *FaceFill) strin
 		}
 		if f.Projected {
 			tf := isoTopMatrix
-			if m := sideMatrix(face); m != "" {
+			if wallTF != "" {
+				tf = wallTF
+			} else if m := sideMatrix(face); m != "" {
 				tf = m
 			}
 			tag := `<linearGradient id="` + id + `"`
@@ -140,7 +175,9 @@ func emitFaceFill(defs *strings.Builder, prefix, face string, f *FaceFill) strin
 		body := inner.String()
 		if f.Pattern.Projected {
 			tf := isoTopMatrix
-			if m := sideMatrix(face); m != "" {
+			if wallTF != "" {
+				tf = wallTF
+			} else if m := sideMatrix(face); m != "" {
 				tf = m
 			}
 			if strings.Contains(body, `patternTransform="`) {

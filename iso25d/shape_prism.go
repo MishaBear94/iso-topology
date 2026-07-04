@@ -248,11 +248,29 @@ func convexHull(pts [][2]float64) [][2]float64 {
 // vocabulary: palette top/left/right (side walls pick left or right by
 // normal dominance), stroke, opacity, dash, label + icon on the top
 // face's inscribed content rect. Gradients / patterns / shadow join in
-// M3/M4 with the Surface and Effect pipelines.
+// M3/M4 with the Surface and Effect pipelines. v3.12 — palette
+// top/left/rightGradient reach the prism walls (dispatched to the two
+// visible wall groups by normal dominance, aligning with the box's
+// left/right semantics), and Projected face fills pin to each wall's
+// true iso plane via per-side matrices.
 func RenderIsoPrism(o IsoBoxOpts, sides int) string {
 	g := computeBoxGeom(o.Width, o.Depth, o.Height, o.Margin)
 	params := map[string]any{"sides": sides}
 	var prov PrismShapeProvider
+
+	// v3.12 — per-side pin-to-plane matrices for Projected fills: the
+	// wall extruded from base edge k→k+1 shears a pattern/gradient tile
+	// along that edge's iso projection (sideMatrix can't serve sideK
+	// names — the orientation depends on the base geometry, not the name).
+	n := prismSides(params)
+	base := prismBase(o.Width, o.Depth, n)
+	sideTF := make(map[string]string, n)
+	for k := 0; k < n; k++ {
+		a, b := base[k], base[(k+1)%n]
+		if tf := SideMatrixForEdge(b[0]-a[0], b[1]-a[1]); tf != "" {
+			sideTF[fmt.Sprintf("side%d", k)] = tf
+		}
+	}
 
 	var sb strings.Builder
 	sb.WriteString(svgHeader(g.ViewW, g.ViewH))
@@ -260,8 +278,24 @@ func RenderIsoPrism(o IsoBoxOpts, sides int) string {
 	// v3.4 (M4) — dropShadow + grain reach the prism family; the box
 	// path has had both since v1.2/v2.6.
 	shadowID, grainID := "", ""
+	// v3.12 — palette gradients: same DSL fields as the box family; the
+	// walls facing +x take the right gradient, the walls facing +y the
+	// left one (see the normal-dominance dispatch in the face loop).
+	topFill, leftFill, rightFill := o.TopFill, o.LeftFill, o.RightFill
 	{
 		var defs strings.Builder
+		if o.TopGradient != nil {
+			emitLinearGradient(&defs, "prism-grad-top", o.TopGradient)
+			topFill = "url(#prism-grad-top)"
+		}
+		if o.LeftGradient != nil {
+			emitLinearGradient(&defs, "prism-grad-left", o.LeftGradient)
+			leftFill = "url(#prism-grad-left)"
+		}
+		if o.RightGradient != nil {
+			emitLinearGradient(&defs, "prism-grad-right", o.RightGradient)
+			rightFill = "url(#prism-grad-right)"
+		}
 		if strings.TrimSpace(o.ShadowColor) != "" && (o.ShadowDx != 0 || o.ShadowDy != 0 || o.ShadowBlur > 0) {
 			shadowID = "prism-shadow"
 			emitDropShadowFilter(&defs, shadowID, o.ShadowDx, o.ShadowDy, o.ShadowBlur, o.ShadowColor)
@@ -306,16 +340,16 @@ func RenderIsoPrism(o IsoBoxOpts, sides int) string {
 		if !f.Visible {
 			continue
 		}
-		fill := o.TopFill
+		fill := topFill
 		if f.Name != "top" {
 			if f.Normal[0] >= f.Normal[1] {
-				fill = o.RightFill
+				fill = rightFill
 			} else {
-				fill = o.LeftFill
+				fill = leftFill
 			}
 		}
 		if fs := surfaceFor(o.FaceSurfaces, f.Name); fs != nil && fs.Fill != nil {
-			if ref := emitFaceFill(&faceDefs, "", f.Name, fs.Fill); ref != "" {
+			if ref := emitFaceFillProjected(&faceDefs, "", f.Name, fs.Fill, sideTF[f.Name]); ref != "" {
 				fill = ref
 			}
 		}
