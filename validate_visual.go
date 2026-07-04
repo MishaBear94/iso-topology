@@ -465,6 +465,27 @@ func VisualContrastIssues(doc *Document) []Issue {
 		walkContrast(n.Parts, prefix)
 	}
 	issues = append(issues, cloudFaceIssues(doc)...)
+	issues = append(issues, bodyOcclusionIssues(doc)...)
+	return issues
+}
+
+// bodyOcclusionIssues (WS-H) surfaces body-vs-body occlusion — a node whose
+// projected silhouette is substantially painted over by a nearer node (see
+// BodyOcclusions in occlusion.go) — as validation warnings. It rides the same
+// wired entry point as cloudFaceIssues so the check reaches Validate without a
+// new aggregation seam. The path points at the HIDDEN node (the one the reader
+// can no longer see).
+func bodyOcclusionIssues(doc *Document) []Issue {
+	var issues []Issue
+	for _, oc := range BodyOcclusions(doc) {
+		issues = append(issues, Issue{
+			Severity: SeverityWarning,
+			Path:     fmt.Sprintf("nodes.%s.parts[%s]", oc.NodeID, oc.Hidden),
+			Message: fmt.Sprintf("node %q is hidden behind node %q in the rendered view — %q is painted in front and covers %.0f%% of its silhouette",
+				oc.Hidden, oc.Occluder, oc.Occluder, oc.Frac*100),
+			Suggest: "move the pair apart with place/offset so the silhouettes separate, or enable canvas.depthSort if the paint order (not the geometry) is what buries it",
+		})
+	}
 	return issues
 }
 

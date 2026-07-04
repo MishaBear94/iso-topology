@@ -36,6 +36,9 @@ func RepairAndReport(doc *Document) (iters int, fixed []string) {
 	if d := beforeContrast - afterContrast; d > 0 {
 		fixed = append(fixed, fmt.Sprintf("raised label contrast on %d node(s)", d))
 	}
+	if d := beforeRead.BodyOcclusions - afterRead.BodyOcclusions; d > 0 {
+		fixed = append(fixed, fmt.Sprintf("uncovered %d node(s) hidden behind a nearer body", d))
+	}
 	if d := beforeRead.Tunnels - afterRead.Tunnels; d > 0 {
 		fixed = append(fixed, fmt.Sprintf("rerouted: cleared %d edge(s) tunnelling through nodes", d))
 	}
@@ -111,6 +114,11 @@ func RepairScene(doc *Document) (*Document, int) {
 		}
 		if scene := doc.Scene(); scene != nil {
 			if repairOverlaps(doc, scene) {
+				changed = true
+			}
+			// WS-H: uncover bodies buried behind a nearer node — measured,
+			// kept only on strict improvement (repair_bodyocc.go).
+			if repairBodyOcclusion(doc, scene) {
 				changed = true
 			}
 			// Routing last: it measures the routes AROUND the positions the

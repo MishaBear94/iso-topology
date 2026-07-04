@@ -502,6 +502,287 @@ func occLabelBoxes(p *CompositePart) (occRect, occRect) {
 	return scr, occRect{ox, oy, ox + tw, oy + size}
 }
 
+// ── body-vs-body occlusion (WS-H) ────────────────────────────────────────────
+//
+// The master plan's last Phase-1 open item: a node whose projected silhouette
+// is largely painted over by a NEARER node was invisible to every detector.
+// "Nearer" is defined by the actual paint order — author painter order by
+// default, canvas.depthSort order when that flag is on — because the pixel
+// truth is whoever paints later covers whoever painted earlier, regardless of
+// what a depth heuristic would prefer. occPaintOrder mirrors renderComposite's
+// ordering exactly so the detected pair is the pair the SVG really draws.
+
+// BodyOcclusion is one body-vs-body occlusion defect: Hidden's projected
+// silhouette is painted over by Occluder (drawn later, i.e. in front),
+// covering Frac of Hidden's silhouette area.
+type BodyOcclusion struct {
+	NodeID   string  `json:"node"`     // owning composite document node (e.g. "scene")
+	Hidden   string  `json:"hidden"`   // the earlier-painted part being covered
+	Occluder string  `json:"occluder"` // the later-painted part in front
+	Frac     float64 `json:"frac"`     // covered fraction of Hidden's silhouette (0..1]
+	// sep is the screen-space centroid(hidden)−centroid(occluder) vector — the
+	// direction that separates the pair — kept for the repair actuator.
+	sep [2]float64
+}
+
+// bodyOcclusionThreshold is the minimum covered-silhouette fraction before a
+// pair counts as a defect. Calibrated conservatively: ordinary iso layouts
+// graze each other's hulls constantly — the corpus sweep measured every
+// shipped bench/node/topology sample at ≤ 0.16 (max: training-compute 0.158)
+// — so 0.4 flags only a node that is substantially swallowed while leaving
+// the whole existing corpus at zero (no new warnings, R unchanged, repair
+// never armed).
+const bodyOcclusionThreshold = 0.4
+
+// BodyOcclusions detects body-vs-body occlusion across the document. It is an
+// iso-only, height-induced signal: under projection: top the silhouette IS the
+// footprint, and footprint collisions are already the overlap metric's job, so
+// top-projection documents report none.
+func BodyOcclusions(doc *Document) []BodyOcclusion {
+	if doc == nil {
+		return nil
+	}
+	if doc.Canvas != nil && doc.Canvas.Projection == "top" {
+		return nil
+	}
+	ids := make([]string, 0, len(doc.Nodes))
+	for id := range doc.Nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids) // stable output regardless of map iteration
+	var out []BodyOcclusion
+	for _, id := range ids {
+		n := doc.Nodes[id]
+		if n == nil || n.Shape != "composite" {
+			continue
+		}
+		occs := bodyOcclusionsInNode(n, doc.Theme, doc.Canvas, bodyOcclusionThreshold)
+		for i := range occs {
+			occs[i].NodeID = id
+		}
+		out = append(out, occs...)
+	}
+	return out
+}
+
+// bodyOcclusionsInNode solves + lowers a CLONE (detection must never mutate
+// the doc), replays the renderer's paint order, and runs the pair kernel.
+// minFrac lets the repair loop measure sub-threshold progress.
+func bodyOcclusionsInNode(n *Node, theme *Theme, canvas *Canvas, minFrac float64) []BodyOcclusion {
+	if n == nil {
+		return nil
+	}
+	clone := &Node{Shape: n.Shape, GridStep: n.GridStep, Parts: cloneParts(n.Parts)}
+	if n.Layout != nil {
+		l := *n.Layout
+		clone.Layout = &l
+	}
+	applyLayout(clone, canvas)
+	flat := lowerCompositeParts(clone.Parts, 0, 0, 0)
+	flat = occPaintOrder(flat, canvas, clone.GridStep)
+	return bodyOcclusionsInFlat(flat, theme, minFrac)
+}
+
+// occPaintOrder replays renderComposite's painter ordering on lowered parts:
+// substrates first, then thin "platform" parts other parts stand on, then the
+// bodies — and, when canvas.depthSort is on, the same depthSortParts re-sort.
+// It MUST stay in lockstep with renderComposite (render.go); the paint-order
+// consistency tests in occlusion_body_test.go pin the two together. The parts
+// come from a clone, so marking platforms isSubstrate here is safe.
+func occPaintOrder(flat []*CompositePart, canvas *Canvas, gridStep float64) []*CompositePart {
+	dims := func(p *CompositePart) (x, y, z, w, d, h float64) {
+		w, d, h = 140, 140, 80
+		if p.Geom != nil {
+			if p.Geom.W > 0 {
+				w = p.Geom.W
+			}
+			if p.Geom.D > 0 {
+				d = p.Geom.D
+			}
+			if p.Geom.H > 0 {
+				h = p.Geom.H
+			}
+		}
+		if p.Offset != nil {
+			x, y, z = p.Offset.WX, p.Offset.WY, p.Offset.WZ
+		}
+		return
+	}
+	isPlatform := make([]bool, len(flat))
+	for i, p := range flat {
+		if p.isSubstrate {
+			continue
+		}
+		px, py, pz, pw, pd, ph := dims(p)
+		if ph > 24 {
+			continue
+		}
+		for j, q := range flat {
+			if i == j || q.isSubstrate {
+				continue
+			}
+			qx, qy, qz, qw, qd, _ := dims(q)
+			if math.Abs(qz-(pz+ph)) > 0.5 {
+				continue
+			}
+			cx, cy := qx+qw/2, qy+qd/2
+			if cx > px && cx < px+pw && cy > py && cy < py+pd {
+				isPlatform[i] = true
+				break
+			}
+		}
+	}
+	ordered := make([]*CompositePart, 0, len(flat))
+	for _, p := range flat {
+		if p.isSubstrate {
+			ordered = append(ordered, p)
+		}
+	}
+	for i, p := range flat {
+		if !p.isSubstrate && isPlatform[i] {
+			p.isSubstrate = true // downstream treats it like a slab, exactly as render.go does
+			ordered = append(ordered, p)
+		}
+	}
+	nSubstrates := len(ordered)
+	for _, p := range flat {
+		if !p.isSubstrate {
+			ordered = append(ordered, p)
+		}
+	}
+	if canvas != nil && canvas.DepthSort {
+		depthSortParts(ordered, nSubstrates, gridStep)
+	}
+	return ordered
+}
+
+// bodyOcclusionsInFlat is the pair kernel over paint-ordered parts. For each
+// ordered pair (p earlier, q later = in front) of named opaque bodies whose
+// top-down FOOTPRINTS are disjoint — footprint contact is either the overlap
+// metric's defect or a deliberate Z-stack, never this signal — it clips p's
+// projected silhouette hull by q's and reports the covered area fraction.
+func bodyOcclusionsInFlat(flat []*CompositePart, theme *Theme, minFrac float64) []BodyOcclusion {
+	var out []BodyOcclusion
+	for i := 0; i < len(flat); i++ {
+		p := flat[i]
+		if !occludingSolid(p) {
+			continue // labels / slabs / platforms / containers aren't bodies
+		}
+		hullP, ok := occNodeHull(p)
+		if !ok {
+			continue
+		}
+		areaP := convexPolyArea(hullP)
+		if areaP <= 0 {
+			continue
+		}
+		for j := i + 1; j < len(flat); j++ {
+			q := flat[j]
+			if !occludingSolid(q) || stackBase(q.ID) == stackBase(p.ID) {
+				continue // not a body, or a replica of p's own stack
+			}
+			if !occluderHidesText(theme, q) {
+				continue // wireframe / see-through ghost paints nothing over p
+			}
+			if occOverlap(occTopBox(p), occTopBox(q)) {
+				continue // footprint contact: overlap metric / deliberate stack territory
+			}
+			hullQ, ok := occNodeHull(q)
+			if !ok {
+				continue
+			}
+			frac := convexPolyArea(convexClip(hullP, hullQ)) / areaP
+			if frac < minFrac {
+				continue
+			}
+			cpx, cpy := polyCentroid(hullP)
+			cqx, cqy := polyCentroid(hullQ)
+			out = append(out, BodyOcclusion{
+				Hidden:   p.ID,
+				Occluder: q.ID,
+				Frac:     frac,
+				sep:      [2]float64{cpx - cqx, cpy - cqy},
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Hidden != out[j].Hidden {
+			return out[i].Hidden < out[j].Hidden
+		}
+		return out[i].Occluder < out[j].Occluder
+	})
+	return out
+}
+
+// convexPolyArea is the (unsigned) shoelace area of a polygon.
+func convexPolyArea(poly [][2]float64) float64 {
+	return math.Abs(signedPolyArea2(poly)) / 2
+}
+
+// signedPolyArea2 is twice the signed shoelace area (positive = CCW in the
+// math sense, i.e. positive-cross winding).
+func signedPolyArea2(poly [][2]float64) float64 {
+	s := 0.0
+	for i := range poly {
+		a, b := poly[i], poly[(i+1)%len(poly)]
+		s += a[0]*b[1] - b[0]*a[1]
+	}
+	return s
+}
+
+// polyCentroid is the vertex centroid — enough precision for a push direction.
+func polyCentroid(poly [][2]float64) (float64, float64) {
+	if len(poly) == 0 {
+		return 0, 0
+	}
+	var sx, sy float64
+	for _, p := range poly {
+		sx += p[0]
+		sy += p[1]
+	}
+	return sx / float64(len(poly)), sy / float64(len(poly))
+}
+
+// convexClip clips subject to the inside of the CONVEX polygon clip
+// (Sutherland–Hodgman). Both polygons come from convexHull, so the convexity
+// precondition holds; winding is normalized here. Fully deterministic.
+func convexClip(subject, clip [][2]float64) [][2]float64 {
+	if len(subject) < 3 || len(clip) < 3 {
+		return nil
+	}
+	if signedPolyArea2(clip) < 0 { // normalize to positive winding: interior = left of each edge
+		rev := make([][2]float64, len(clip))
+		for i := range clip {
+			rev[i] = clip[len(clip)-1-i]
+		}
+		clip = rev
+	}
+	out := subject
+	for i := range clip {
+		a, b := clip[i], clip[(i+1)%len(clip)]
+		in := out
+		out = nil
+		if len(in) == 0 {
+			return nil
+		}
+		side := func(p [2]float64) float64 {
+			return (b[0]-a[0])*(p[1]-a[1]) - (b[1]-a[1])*(p[0]-a[0])
+		}
+		for k := range in {
+			cur, nxt := in[k], in[(k+1)%len(in)]
+			sc, sn := side(cur), side(nxt)
+			if sc >= 0 {
+				out = append(out, cur)
+			}
+			if (sc > 0 && sn < 0) || (sc < 0 && sn > 0) {
+				t := sc / (sc - sn)
+				out = append(out, [2]float64{cur[0] + t*(nxt[0]-cur[0]), cur[1] + t*(nxt[1]-cur[1])})
+			}
+		}
+	}
+	return out
+}
+
 // resolveGroupLabelOcclusion is the missing auto-layout constraint: a group's
 // label must not be covered by an upper-layer node. It judges occlusion in BOTH
 // the 2.5D screen projection (a taller node BEHIND the label in the top-down
