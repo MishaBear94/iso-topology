@@ -5,6 +5,8 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"github.com/MarkovWangRR/iso-topology/textmetrics"
 )
 
 // LabelOcclusionIssues warns when text is covered by a later-painted node in
@@ -214,7 +216,7 @@ func occLabelSamplePts(p *CompositePart, nx, nz int) [][2]float64 {
 	if p.Style != nil && p.Style.Text != nil && p.Style.Text.Size != nil && *p.Style.Text.Size > 0 {
 		size = *p.Style.Text.Size
 	}
-	tw := float64(len([]rune(p.Label))) * size * 0.62
+	tw := textWidthPx(p.Label, size, textmetrics.NarrowPartLabel)
 	var ox, oy, oz float64
 	if p.Offset != nil {
 		ox, oy, oz = p.Offset.WX, p.Offset.WY, p.Offset.WZ
@@ -484,7 +486,7 @@ func occLabelBoxes(p *CompositePart) (occRect, occRect) {
 	if p.Style != nil && p.Style.Text != nil && p.Style.Text.Size != nil && *p.Style.Text.Size > 0 {
 		size = *p.Style.Text.Size
 	}
-	tw := float64(len([]rune(p.Label))) * size * 0.62
+	tw := textWidthPx(p.Label, size, textmetrics.NarrowPartLabel)
 	var ox, oy, oz float64
 	if p.Offset != nil {
 		ox, oy, oz = p.Offset.WX, p.Offset.WY, p.Offset.WZ

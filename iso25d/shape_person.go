@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/MarkovWangRR/iso-topology/textmetrics"
 )
 
 type IsoPersonOpts struct {
@@ -104,9 +106,10 @@ func RenderIsoPerson(o IsoPersonOpts) string {
 	labelGap := 6.0
 	labelH := 0.0
 	if hasLabel {
-		// Rough width estimate: 0.6em per character. Lets the bbox
-		// expand so the label isn't clipped by the viewBox.
-		labelW = float64(len([]rune(o.Label))) * o.FontSize * 0.6
+		// Rough width estimate (rune-aware: CJK a full em, latin the
+		// person-label factor). Lets the bbox expand so the label
+		// isn't clipped by the viewBox.
+		labelW = textmetrics.TextPx(o.Label, o.FontSize, textmetrics.NarrowPersonLabel)
 		labelH = o.FontSize + labelGap
 	}
 

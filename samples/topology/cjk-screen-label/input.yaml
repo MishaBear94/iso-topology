@@ -1,0 +1,49 @@
+# cjk-screen-label — regression golden for rune-aware text metrics.
+#
+# Locks the fix for the byte-count width bug: CJK is 3 bytes per glyph
+# in UTF-8, so screen-space label boxes (inject.go) used to come out
+# ~3× too wide for Chinese titles. This scene exercises:
+#   - a pure-CJK screen label (orient: screen on an iso_text title)
+#   - a mixed latin+CJK screen label
+#   - CJK top-face labels (wrap/shrink path, already rune-aware)
+#   - a CJK connector label chip
+canvas: { background: "#F7F8FA", padding: 48 }
+
+theme:
+  text: { family: "Inter, system-ui, sans-serif", size: 11, weight: "600", color: "#1F2E50" }
+
+nodes:
+  scene:
+    shape: composite
+    parts:
+      - id: title
+        shape: iso_text
+        offset: { wx: -40, wy: -60 }
+        geom: { w: 320, d: 26, h: 4 }
+        label: "消息队列服务拓扑"
+        style:
+          palette: { top: "#F7F8FA" }
+          text: { orient: screen, size: 20, weight: "700", color: "#1F2E50" }
+
+      - id: producer
+        shape: rectangle
+        offset: { wx: 0, wy: 40 }
+        geom: { w: 120, d: 80, h: 24 }
+        label: "生产者"
+        style:
+          palette: { top: "#B7CDEE", left: "#8FA9D3", right: "#A3BBE1" }
+
+      - id: broker
+        shape: rectangle
+        offset: { wx: 200, wy: 40 }
+        geom: { w: 140, d: 90, h: 32 }
+        label: "API 网关"
+        style:
+          palette: { top: "#A8C89C", left: "#84A876", right: "#96B88A" }
+          text: { orient: screen, size: 14, weight: "600", color: "#1F2E50" }
+
+    connectors:
+      - from: producer
+        to: broker
+        label: "异步投递"
+        stroke: { color: "#5B7DB1", width: 2 }

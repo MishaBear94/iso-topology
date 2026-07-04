@@ -3,6 +3,8 @@ package iso25d
 import (
 	"fmt"
 	"strings"
+
+	"github.com/MarkovWangRR/iso-topology/textmetrics"
 )
 
 func RenderIsoText(o IsoBoxOpts) string {
@@ -34,10 +36,11 @@ func RenderIsoText(o IsoBoxOpts) string {
 		m = 12
 	}
 
-	// Approximate text width: monospace fudge factor 0.55 (Inter-ish).
-	// Add half-em of padding so the trailing glyph isn't flush against
-	// the bbox edge after the matrix tilt.
-	textW := float64(len(text))*fontSize*0.55 + fontSize*0.5
+	// Approximate text width: rune-aware — CJK a full em, latin the
+	// iso-text fudge factor (Inter-ish). Add half-em of padding so the
+	// trailing glyph isn't flush against the bbox edge after the
+	// matrix tilt.
+	textW := textmetrics.TextPx(text, fontSize, textmetrics.NarrowIsoText) + fontSize*0.5
 
 	// Local text bbox is (0..textW, −fontSize..0). After the iso
 	// matrix(cos30 sin30 -cos30 sin30 originX originY), each local

@@ -9,6 +9,8 @@ package iso25d
 import (
 	"math"
 	"strings"
+
+	"github.com/MarkovWangRR/iso-topology/textmetrics"
 )
 
 const (
@@ -36,13 +38,10 @@ type topFit struct {
 }
 
 // runeWidth estimates a rune's advance at fontSize 1.0 — CJK and other
-// wide scripts count as a full em, everything else as the 0.58 factor
-// used throughout the repo's text-box estimates.
+// wide scripts count as a full em, everything else as the top-face
+// narrow factor. The model lives in the shared textmetrics package.
 func runeWidth(r rune) float64 {
-	if r >= 0x2E80 {
-		return 1.0
-	}
-	return 0.58
+	return textmetrics.RuneEm(r, textmetrics.NarrowTopFace)
 }
 
 func lineWidth(line string, fs float64) float64 {

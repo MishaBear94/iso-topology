@@ -449,7 +449,9 @@ func labelIssues(doc *Document) []Issue {
 
 					// Item 2: truncation risk
 					if p.Geom != nil && p.Geom.W > 0 {
-						estPx := len(p.Label) * 7
+						// Rune-aware estimate — byte counting inflated
+						// CJK labels ~3× (3 bytes per ideograph).
+						estPx := estimateLabelPx(p.Label)
 						availPx := int(p.Geom.W * 40 * 0.9 * 0.95)
 						if estPx > availPx {
 							issues = append(issues, Issue{
