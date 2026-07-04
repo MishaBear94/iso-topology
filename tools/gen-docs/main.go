@@ -628,7 +628,8 @@ func layoutSchema() map[string]any {
 		"description": "Auto-arrange this container's parts along the iso ground axes — no hand-computed coordinates. On a group, geom.w/d may be omitted (substrate auto-sizes around content).",
 		"required":    []string{"mode"},
 		"properties": map[string]any{
-			"mode":    map[string]any{"type": "string", "enum": []string{"row", "column", "grid", "ring"}, "description": "row = world +x, column = world +y, grid = row-major wrap, ring = first child at the centre with the rest on a circle around it."},
+			"mode":    map[string]any{"type": "string", "enum": []string{"row", "column", "grid", "ring", "auto"}, "description": "row = world +x, column = world +y, grid = row-major wrap, ring = first child at the centre with the rest on a circle around it, auto = connector-driven layering of the whole scene (v4.2)."},
+			"engine":  map[string]any{"type": "string", "enum": []string{"elk", "dagre"}, "description": "v5 — scene-root mode auto only: delegate the arrangement to d2's embedded ELK / dagre engine (offline, deterministic, grid-snapped). Prefer elk for dense DAGs; omit for the built-in solver."},
 			"cols":    map[string]any{"type": "integer", "description": "Grid mode only. Default ceil(sqrt(n))."},
 			"gap":     map[string]any{"type": "number", "description": "Space between children in cells. Default 1."},
 			"padding": map[string]any{"type": "number", "description": "Content inset from container edge in cells. Defaults to gap."},

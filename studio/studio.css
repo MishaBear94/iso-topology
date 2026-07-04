@@ -154,6 +154,12 @@ kbd{font:10px ui-monospace,Menlo,monospace;border:1px solid var(--border);border
   font:11px Inter,sans-serif;padding:5px 13px;border-radius:999px;box-shadow:var(--shadow);}
 svg g[data-part-id]{transition:filter .12s;}
 svg g[data-part-id].hi{filter:drop-shadow(0 0 3px rgba(16,174,185,.85));}
+/* multi-selection: a persistent accent glow, stronger than the hover .hi so a
+   selected node stays clearly marked while others are hovered. */
+svg g[data-part-id].sel{filter:drop-shadow(0 0 2px var(--accent-deep)) drop-shadow(0 0 7px var(--accent));}
+/* marquee box selection frame (drawn while dragging on empty canvas) */
+#viewport .marquee{position:absolute;z-index:8;pointer-events:none;
+  border:1.5px solid var(--accent);background:rgba(16,174,185,.10);border-radius:2px;}
 svg g[data-part-id]{transition:filter .12s;}
 svg g[data-part-id]:hover{filter:drop-shadow(0 0 5px var(--accent));}
 svg g[data-part-id].dragging{filter:drop-shadow(0 0 9px var(--accent));opacity:.82;}

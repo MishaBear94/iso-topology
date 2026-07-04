@@ -210,6 +210,16 @@ type Layout struct {
 	// Align: cross-axis alignment of children within their row/column
 	// track — "start" | "center" | "end". Default "center".
 	Align string `yaml:"align,omitempty" json:"align,omitempty"`
+	// Engine — scene-root mode "auto" only (v5): which layered engine
+	// solves the connector graph. "" (default) keeps the built-in
+	// longest-path solver, byte-identical to before; "elk" delegates to
+	// the Eclipse Layout Kernel and "dagre" to dagre (both embedded in
+	// the d2 dependency — pure offline JS, deterministic). Prefer "elk"
+	// for dense DAGs with heavy fan-in/fan-out where the built-in
+	// solver leaves crossings/tunnels. Engine coordinates are snapped
+	// to the cell lattice; on engine failure the built-in solver runs
+	// instead and a Warning is reported.
+	Engine string `yaml:"engine,omitempty" json:"engine,omitempty"`
 }
 
 // Place positions a part relative to a sibling's footprint. Give one

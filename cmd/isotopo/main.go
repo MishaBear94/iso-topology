@@ -878,6 +878,17 @@ func serveFile(in string) error {
 			Kind: "move", Target: q.Get("kind"), ID: q.Get("id"), CI: ci,
 			DWX: atof(q.Get("dwx")), DWY: atof(q.Get("dwy")), Snap: atof(q.Get("snap")),
 		}
+		// v5 — Studio group move: ids=<JSON string array> applies the same
+		// delta to every listed node atomically (all-or-nothing, one text
+		// surgery, one round-trip). Absent → the single-id path is untouched.
+		if idsQ := q.Get("ids"); idsQ != "" {
+			var ids []string
+			if err := json.Unmarshal([]byte(idsQ), &ids); err != nil {
+				http.Error(w, "bad ids: "+err.Error(), 400)
+				return
+			}
+			op.Kind, op.Target, op.ID, op.IDs = "move-multi", "node", "", ids
+		}
 		// v4.6 — Studio posts an explicit interior waypoint list (drawio-style
 		// per-segment edit) as wp; absent → ApplyOpText falls back to a bend.
 		if wp := q.Get("wp"); wp != "" {

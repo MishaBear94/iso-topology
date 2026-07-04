@@ -1,0 +1,52 @@
+# dense-fabric: 16-node 4-tier DAG with shuffled fan-in/fan-out and
+# tier-skipping edges — the class the built-in longest-path solver
+# handles worst (fixed barycenter sweeps leave crossings; skip edges
+# tunnel through the middle tiers). engine: elk delegates placement to
+# the Eclipse Layout Kernel (embedded in d2; offline + deterministic).
+canvas: { background: "#0E1726", padding: 50 }
+nodes:
+  scene:
+    shape: composite
+    layout: { mode: auto, engine: elk }
+    parts:
+      - { id: s1, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "S1", style: { palette: { top: "#274060" }, text: { color: "#DCE7F5" } } }
+      - { id: s2, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "S2", style: { palette: { top: "#274060" }, text: { color: "#DCE7F5" } } }
+      - { id: s3, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "S3", style: { palette: { top: "#274060" }, text: { color: "#DCE7F5" } } }
+      - { id: s4, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "S4", style: { palette: { top: "#274060" }, text: { color: "#DCE7F5" } } }
+      - { id: m1, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "M1", style: { palette: { top: "#2E5339" }, text: { color: "#DCE7F5" } } }
+      - { id: m2, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "M2", style: { palette: { top: "#2E5339" }, text: { color: "#DCE7F5" } } }
+      - { id: m3, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "M3", style: { palette: { top: "#2E5339" }, text: { color: "#DCE7F5" } } }
+      - { id: m4, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "M4", style: { palette: { top: "#2E5339" }, text: { color: "#DCE7F5" } } }
+      - { id: p1, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "P1", style: { palette: { top: "#59421F" }, text: { color: "#DCE7F5" } } }
+      - { id: p2, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "P2", style: { palette: { top: "#59421F" }, text: { color: "#DCE7F5" } } }
+      - { id: p3, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "P3", style: { palette: { top: "#59421F" }, text: { color: "#DCE7F5" } } }
+      - { id: p4, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "P4", style: { palette: { top: "#59421F" }, text: { color: "#DCE7F5" } } }
+      - { id: k1, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "K1", style: { palette: { top: "#5A2A3B" }, text: { color: "#DCE7F5" } } }
+      - { id: k2, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "K2", style: { palette: { top: "#5A2A3B" }, text: { color: "#DCE7F5" } } }
+      - { id: k3, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "K3", style: { palette: { top: "#5A2A3B" }, text: { color: "#DCE7F5" } } }
+      - { id: k4, shape: rectangle, geom: { w: 100, d: 80, h: 30 }, label: "K4", style: { palette: { top: "#5A2A3B" }, text: { color: "#DCE7F5" } } }
+    connectors:
+      - { from: s1, to: m2, routing: orthogonal }
+      - { from: s1, to: m4, routing: orthogonal }
+      - { from: s2, to: m1, routing: orthogonal }
+      - { from: s2, to: m3, routing: orthogonal }
+      - { from: s3, to: m2, routing: orthogonal }
+      - { from: s3, to: m4, routing: orthogonal }
+      - { from: s4, to: m1, routing: orthogonal }
+      - { from: s4, to: m3, routing: orthogonal }
+      - { from: m1, to: p2, routing: orthogonal }
+      - { from: m1, to: p4, routing: orthogonal }
+      - { from: m2, to: p1, routing: orthogonal }
+      - { from: m2, to: p3, routing: orthogonal }
+      - { from: m3, to: p2, routing: orthogonal }
+      - { from: m4, to: p1, routing: orthogonal }
+      - { from: m4, to: p3, routing: orthogonal }
+      - { from: p1, to: k2, routing: orthogonal }
+      - { from: p2, to: k1, routing: orthogonal }
+      - { from: p2, to: k4, routing: orthogonal }
+      - { from: p3, to: k2, routing: orthogonal }
+      - { from: p4, to: k3, routing: orthogonal }
+      - { from: s1, to: p1, routing: orthogonal }
+      - { from: s4, to: p4, routing: orthogonal }
+      - { from: m3, to: k4, routing: orthogonal }
+      - { from: m2, to: k1, routing: orthogonal }
