@@ -335,7 +335,12 @@ func collectDescendantObstacles(parts []*CompositePart, baseX, baseY, baseZ floa
 	}
 }
 
-func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo, sceneParts []*CompositePart, nSubstrates int) (string, []screenRect) {
+// rc is the WS-E in-memory route collector (routecollect.go): when non-nil,
+// every emitted connector's real pre-clip geometry is recorded so evaluators
+// can consume structured routes instead of regexing data-route out of the
+// SVG. Collection is pure observation — a non-nil collector never changes a
+// single output byte (straight edges, by contract, still emit NO data-route).
+func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo, sceneParts []*CompositePart, nSubstrates int, rc *routeCollector) (string, []screenRect) {
 	project := projectIso
 	tx, ty := partsScreenOrigin(infos)
 
@@ -537,6 +542,11 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		// data-route so Studio can hit-test a segment (screen) and edit it in
 		// world space without re-deriving the route server-side.
 		var routeWorld, routeScreen [][2]float64
+		// collWorld/collScreen are the WS-E collector's counterparts for the
+		// straight/bezier branches, which by contract never emit data-route:
+		// keeping them separate from routeWorld/routeScreen guarantees route
+		// collection can't leak a new attribute into the SVG.
+		var collWorld, collScreen [][2]float64
 		switch c.Routing {
 		case "orthogonal":
 			// Anchor-aware L/Z in the iso world ground plane.
@@ -854,6 +864,13 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			} else {
 				pts = [][2]float64{{x1, y1}, {x2, y2}}
 			}
+			// WS-E collection: recover the drawn curve's WORLD track by
+			// sampling the quadratic and inverse-projecting (pre-clip).
+			if rc != nil {
+				_, _, srcZ, _ := ar.world(c.From)
+				_, _, tgtZ, _ := ar.world(c.To)
+				collScreen, collWorld = sampleBezierRoute(pts, srcZ, tgtZ, tx, ty)
+			}
 		default: // "straight" or empty
 			x1, y1, ok1 := ar.screen(c.From)
 			x2, y2, ok2 := ar.screen(c.To)
@@ -861,6 +878,14 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				continue
 			}
 			pts = [][2]float64{{x1, y1}, {x2, y2}}
+			// WS-E collection: the drawn line IS the segment between the two
+			// world anchors (linear projection), so record those (pre-clip).
+			if rc != nil {
+				sWX, sWY, _, _ := ar.world(c.From)
+				tWX, tWY, _, _ := ar.world(c.To)
+				collWorld = [][2]float64{{sWX, sWY}, {tWX, tWY}}
+				collScreen = [][2]float64{{x1, y1}, {x2, y2}}
+			}
 		}
 
 		// v3.2.2 — terminal despike: drop a sub-7px final segment that
@@ -976,6 +1001,23 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		// during the drag (intermediate consistency), not just on drop.
 		fromID, _ := ar.parse(c.From)
 		toID, _ := ar.parse(c.To)
+		// WS-E — record this connector's real route (pure observation; the
+		// SVG bytes below are untouched). Recording sits HERE, at the same
+		// gate the <path> emission passes, so the collector's coverage is
+		// exactly "connectors that actually got drawn": for orthogonal edges
+		// that means the very corners serialized as data-route — the legacy
+		// regex evaluator's coverage — while straight/bezier edges add the
+		// geometry the regex path never saw.
+		if rc != nil {
+			switch c.Routing {
+			case "orthogonal":
+				rc.add(ci, fromID, toID, "orthogonal", routeWorld, routeScreen)
+			case "bezier":
+				rc.add(ci, fromID, toID, "bezier", collWorld, collScreen)
+			default:
+				rc.add(ci, fromID, toID, "straight", collWorld, collScreen)
+			}
+		}
 		// Connector gradient: a userSpaceOnUse linear gradient laid along the
 		// route (source endpoint -> target endpoint). Stroke then references it,
 		// so the line (and its dash segments + arrowhead) fade source->target.
