@@ -2,6 +2,13 @@
 # vocabulary: a body gradient (topGradient shades both dome halves; left/
 # rightGradient address one half each), a silhouette outline ring, a drop
 # shadow, and a backglow halo — all hugging the true head+dome outline.
+#
+# Colour discipline: the golden must be reproducible by the documented
+# `isotopo render` CLI, whose default repair loop retints any label below
+# 3.0 contrast against its worst body-fill stop. Every label here clears
+# 3.0 against BOTH the canvas (what the validator checks — person labels
+# render screen-space on the canvas) and every gradient stop, so repair is
+# a strict no-op (pinned by TestPersonEffectsSampleIsRepairFixpoint).
 canvas:
   background: "#F2F5FA"
   grid: iso
@@ -19,7 +26,7 @@ nodes:
         geom: { w: 120, d: 120, h: 56 }
         style:
           palette:
-            topGradient: { from: "#6FA8E8", to: "#2C5896", dir: "down" }
+            topGradient: { from: "#6FA8E8", to: "#4A79B8", dir: "down" }
           text: { color: "#12233D" }
           effects:
             outline: { color: "#1F4C86", width: 2, dash: "5 3", opacity: 0.85 }
