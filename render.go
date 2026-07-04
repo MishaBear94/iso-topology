@@ -38,7 +38,7 @@ func RenderWithCanvas(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation)
 		return RenderPlan(n, theme, canvas, anns)
 	}
 	if n.Shape == "composite" {
-		return renderComposite(n, theme, canvas, anns)
+		return renderComposite(n, theme, canvas, anns, nil)
 	}
 	shape, opts := Flatten(n, theme)
 	// Same integral-dimension contract as the composite path (v3.0):
@@ -46,11 +46,32 @@ func RenderWithCanvas(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation)
 	return ceilOuterDims(iso25d.Convert2DTo25D(shape, opts))
 }
 
+// RenderWithRouteInfo is RenderWithCanvas plus WS-E's in-memory record of
+// every rendered connector's real geometry (world + screen, pre-clip; see
+// ConnectorRoute in routecollect.go). The SVG string is byte-for-byte
+// identical to RenderWithCanvas — collection is pure observation — so this
+// is the structured replacement for regexing data-route out of the output.
+// Non-composite nodes and the top-down plan projection carry no iso
+// connector layer and return nil routes.
+func RenderWithRouteInfo(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation) (string, []ConnectorRoute) {
+	if n == nil {
+		return "", nil
+	}
+	if n.Shape == "composite" && (canvas == nil || canvas.Projection != "top") {
+		rc := &routeCollector{}
+		svg := renderComposite(n, theme, canvas, anns, rc)
+		return svg, rc.routes
+	}
+	return RenderWithCanvas(n, theme, canvas, anns), nil
+}
+
 // renderComposite walks a composite node's parts, calls the lowering
 // pass to expand groups and stacks, delegates the iso geometry to
 // iso25d.RenderComposite, then layers in canvas / connectors / screen
-// labels / annotations through the injectors in inject.go.
-func renderComposite(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation) string {
+// labels / annotations through the injectors in inject.go. rc, when
+// non-nil, collects each connector's real route in memory (WS-E) and is
+// forbidden from altering the output bytes.
+func renderComposite(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation, rc *routeCollector) string {
 	// v2.2 — solve layout/place declarations into concrete Offsets
 	// before lowering. Issues are render-time-silent; Validate surfaces
 	// the same list to agents via layoutIssues.
@@ -242,7 +263,7 @@ func renderComposite(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation) 
 	//                       = painted first = furthest back)
 	var connRects []screenRect
 	if len(n.Connectors) > 0 {
-		svg, connRects = injectCompositeConnectors(svg, n.Connectors, infos, n.Parts, nSubstrates)
+		svg, connRects = injectCompositeConnectors(svg, n.Connectors, infos, n.Parts, nSubstrates, rc)
 	}
 	if canvas != nil {
 		svg = injectCanvasBackground(svg, canvas)

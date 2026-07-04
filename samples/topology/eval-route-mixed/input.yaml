@@ -1,0 +1,18 @@
+# eval-route-mixed — WS-E evaluation fixture: one scene that draws all three
+# connector routings (orthogonal / straight / bezier). The route-collector
+# parity tests use it to exercise the straight/bezier coverage the legacy
+# data-route regex never saw, and the golden pins that a straight edge still
+# emits NO data-route attribute (collection is pure observation).
+nodes:
+  scene:
+    shape: composite
+    parts:
+      - { id: ingest,  label: Ingest,  shape: rectangle, geom: { w: 120, d: 100, h: 40 }, offset: { wx: 0,   wy: 0 } }
+      - { id: process, label: Process, shape: rectangle, geom: { w: 120, d: 100, h: 40 }, offset: { wx: 320, wy: 0 } }
+      - { id: store,   label: Store,   shape: cylinder,  geom: { w: 110, d: 110, h: 60 }, offset: { wx: 325, wy: 260 } }
+      - { id: serve,   label: Serve,   shape: rectangle, geom: { w: 120, d: 100, h: 40 }, offset: { wx: 0,   wy: 260 } }
+    connectors:
+      - { from: ingest, to: process, routing: orthogonal, arrow: triangle, label: etl }
+      - { from: process.front, to: store.back, routing: straight, arrow: triangle }
+      - { from: store, to: serve, routing: bezier, arrow: triangle, label: query }
+      - { from: serve.back, to: ingest.front, routing: straight }
