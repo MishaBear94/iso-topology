@@ -3,6 +3,7 @@ package isotopo
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/MarkovWangRR/iso-topology/iso25d"
@@ -258,6 +259,9 @@ func faceSplitIssues(doc *Document) []Issue {
 //   - top face fill vs canvas background (< 1.5 → warning)
 //   - group/boundary top fill vs direct child top fill (< 1.3 → warning)
 //   - iso:// icon with default ink on a dark top fill (luminance < 0.18, no /light or /RRGGBB suffix → warning)
+//
+// It also appends cloudFaceIssues — the cloud-specific "right face is dropped"
+// lint — so cloud styling feedback rides the same wired entry point.
 func VisualContrastIssues(doc *Document) []Issue {
 	if doc == nil {
 		return nil
@@ -409,6 +413,69 @@ func VisualContrastIssues(doc *Document) []Issue {
 			}
 		}
 		walkContrast(n.Parts, prefix)
+	}
+	issues = append(issues, cloudFaceIssues(doc)...)
+	return issues
+}
+
+// cloudFaceIssues warns when a cloud part's OWN style sets a right-face colour
+// (palette.right or palette.rightGradient). The cloud renders exactly two
+// surfaces — the crown (palette.top / topGradient) and one wrap-around side
+// band (palette.left / leftGradient); there is no discrete right face, so a
+// right value is silently dropped by the renderer. Only the node's own style
+// is read (not the theme-resolved one): a theme-wide palette legitimately
+// carries `right` for the box family, and flagging every themed cloud for it
+// would be noise, whereas a right colour written on the cloud itself is an
+// authoring mistake worth surfacing.
+func cloudFaceIssues(doc *Document) []Issue {
+	if doc == nil {
+		return nil
+	}
+	var issues []Issue
+	nodeIDs := make([]string, 0, len(doc.Nodes))
+	for id := range doc.Nodes {
+		nodeIDs = append(nodeIDs, id)
+	}
+	sort.Strings(nodeIDs) // stable issue order regardless of map iteration
+	for _, nodeID := range nodeIDs {
+		n := doc.Nodes[nodeID]
+		if n == nil {
+			continue
+		}
+		prefix := fmt.Sprintf("nodes.%s", nodeID)
+		var walk func(parts []*CompositePart, pathPrefix string)
+		walk = func(parts []*CompositePart, pathPrefix string) {
+			for _, p := range parts {
+				if p == nil {
+					continue
+				}
+				pPath := fmt.Sprintf("%s.parts[%s]", pathPrefix, p.ID)
+				if p.ID == "" {
+					pPath = pathPrefix + ".parts[?]"
+				}
+				if p.Shape == "cloud" && p.Style != nil && p.Style.Palette != nil {
+					pal := p.Style.Palette
+					if pal.Right != "" {
+						issues = append(issues, Issue{
+							Severity: SeverityWarning,
+							Path:     pPath + ".style.palette.right",
+							Message:  fmt.Sprintf("palette.right %q is ignored on a cloud — it renders only a top crown and one wrap-around side band (palette.top/left, topGradient/leftGradient). Move the colour into palette.left or a leftGradient.", pal.Right),
+							Suggest:  "move the colour into palette.left / leftGradient",
+						})
+					}
+					if g := pal.RightGradient; g != nil && (g.From != "" || g.To != "") {
+						issues = append(issues, Issue{
+							Severity: SeverityWarning,
+							Path:     pPath + ".style.palette.rightGradient",
+							Message:  "palette.rightGradient is ignored on a cloud — it renders only a top crown and one wrap-around side band (palette.top/left, topGradient/leftGradient). Use leftGradient for the side band.",
+							Suggest:  "use palette.leftGradient for the cloud's side band",
+						})
+					}
+				}
+				walk(p.Parts, pPath)
+			}
+		}
+		walk(n.Parts, prefix)
 	}
 	return issues
 }

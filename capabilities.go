@@ -205,7 +205,7 @@ func buildShapeCaps() []ShapeCap {
 		"group":     "v2 primitive — translucent labeled substrate wrapping nested parts",
 		"boundary":  "v3.5 — a group whose substrate is a dashed OUTLINE-ONLY flat region (VPC / subnet / trust zone). Same nesting/layout/autosize as group; style.stroke restyles the dashes",
 		"iso_text":  "flat text panel (low extrusion)",
-		"cloud":     "free-form rounded outline; no per-face palette overrides",
+		"cloud":     "free-form rounded outline; styles via palette top/left (+ topGradient/leftGradient) — top paints the crown, left the wrap-around side band; right is unused (no right face, linted). Top-face icon + label supported with box-family anchor/scale semantics on the cloud's inscribed content rect",
 		"triprism":  "v3.2 — 3-gon prism: alert / one-way fan-out semantics",
 		"hexprism":  "v3.2 — 6-gon prism: API gateway / middleware semantics",
 		"octprism":  "v3.2 — 8-gon prism: firewall (stop-sign) / decision-gate semantics",

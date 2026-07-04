@@ -33,7 +33,7 @@ override per-part via `geom.h`.
 | **array3d** | `array3d` | 1.0 | v3.11 — N×M×K volumetric grid. params: countX, countY, countZ (default 3×3×3), gap. Semantic: GPU cluster, tensor, embedding matrix. |
 | **boundary** | `boundary` | 1.0 | v3.5 — a group whose substrate is a dashed OUTLINE-ONLY flat region (VPC / subnet / trust zone). Same nesting/layout/autosize as group; style.stroke restyles the dashes |
 | **circle** | `circle`, `oval` | 1.0 |  |
-| **cloud** | `cloud` | 0.8 | free-form rounded outline; no per-face palette overrides |
+| **cloud** | `cloud` | 0.8 | free-form rounded outline; styles via palette top/left (+ topGradient/leftGradient) — top paints the crown, left the wrap-around side band; right is unused (no right face, linted). Top-face icon + label supported with box-family anchor/scale semantics on the cloud's inscribed content rect |
 | **composite** | `composite` | 1.0 | container — holds parts: [] of CompositePart entries |
 | **custom_path** | `custom_path` | 1.0 | v3.10 — arbitrary polygon base extruded vertically. Provide path: in geom.params (M/L/Z SVG commands). Semantic: any brand or domain-specific shape. |
 | **cylinder** | `cylinder`, `queue`, `stored-data`, `stored_data` | 1.0 |  |
