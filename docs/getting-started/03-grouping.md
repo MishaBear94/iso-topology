@@ -1,4 +1,7 @@
-# 03 — Grouping with containers
+---
+title: "Groups and boundaries"
+description: "Organize services into nested containers in D2 and YAML."
+---
 
 In step 02 we drew five flat services. Real architectures have
 **boundaries** — a VPC, a cluster, a region. iso-topology has two
@@ -106,13 +109,13 @@ declarative way with `place:`:
 Hand-written `offset: {wx, wy}` coordinates still work — but treat
 them as a fine-tune delta on top of `place`/`layout`, not the
 primary mechanism. Every scene in
-[samples/topology](../../samples/topology) is coordinate-free; the
-[langchain-app sample](../../samples/topology/langchain-app/input.yaml)
+[samples/topology](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology) is coordinate-free; the
+[langchain-app sample](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/langchain-app/input.yaml)
 shows grid containers, place chains and auto-sizing in one file.
 
 Full grammar: [`reference/dsl-yaml.md`](../reference/dsl-yaml.md).
 
 ## Next step
 
-→ [`04-replicas-annotations.md`](04-replicas-annotations.md) —
+→ [`04-replicas-annotations.md`](./04-replicas-annotations.md) —
 auto-replicate parts and add screen-space callouts.

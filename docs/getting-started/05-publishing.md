@@ -1,4 +1,7 @@
-# 05 — Publishing the output
+---
+title: "Publish a diagram"
+description: "Embed SVG in documentation and export images for presentations."
+---
 
 You have a `topology.svg` you like. Time to put it in front of
 people.
@@ -6,7 +9,7 @@ people.
 ## Markdown (GitHub / Notion / Obsidian)
 
 ```markdown
-![architecture](out/topology.svg)
+![architecture](./out/topology.svg)
 ```
 
 GitHub renders SVG inline. Keep the file in the same commit as the
@@ -69,7 +72,7 @@ Each element in `nodes/` is a self-contained iso sticker. Drop one
 inline:
 
 ```markdown
-The ![queue](out/nodes/queue.svg) holds pending jobs.
+The ![queue](./out/nodes/queue.svg) holds pending jobs.
 ```
 
 Useful for blog posts where you want a small icon, not the whole

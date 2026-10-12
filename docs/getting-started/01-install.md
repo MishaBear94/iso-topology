@@ -1,4 +1,7 @@
-# 01 — Install
+---
+title: "Installation"
+description: "Install the CLI, build from source, or add the Go library to your project."
+---
 
 This is step 1 of 5. By the end of the series you'll have a real
 iso architecture diagram in your repo.
@@ -14,12 +17,19 @@ linked into the binary.
 - macOS, Linux, or Windows
 - No CGO, no C compiler, no system fonts required
 
+## Which version to install
+
+These docs track `main`. Install `@main` to use the current documented feature
+set, or `@latest` for the newest tagged release. Releases can lag behind `main`.
+The Go module path remains `github.com/MarkovWangRR/iso-topology`, even though
+the repository now lives at `MishaBear94/iso-topology`.
+
 ## Three install paths
 
 ### A. `go install` (recommended for CLI users)
 
 ```bash
-go install github.com/MarkovWangRR/iso-topology/cmd/isotopo@latest
+go install github.com/MarkovWangRR/iso-topology/cmd/isotopo@main
 ```
 
 This builds and installs the `isotopo` binary into `$GOBIN`
@@ -44,7 +54,7 @@ go install github.com/MarkovWangRR/iso-topology/cmd/isotopo@v0.2.1
 ### B. Clone & build (for hacking on the renderer)
 
 ```bash
-git clone https://github.com/MarkovWangRR/iso-topology
+git clone https://github.com/MishaBear94/iso-topology
 cd iso-topology
 go build -o isotopo ./cmd/isotopo
 ./isotopo render samples/topology/microservice/input.d2 ./out
@@ -56,7 +66,8 @@ Run the test suite:
 go test ./...
 ```
 
-All fixtures under `samples/` (8 node + 6 topology) should pass in under a second.
+The suite checks sample SVG fixtures, layout, routing, editing, and export behavior.
+Runtime depends on the machine and available cache.
 
 ### C. Library import (use as a Go module)
 
@@ -102,9 +113,7 @@ replace oss.terrastruct.com/d2 => ../path/to/d2/repo
 
 ```bash
 # Quick "everything is wired" check
-isotopo capabilities | jq '.version, .shapes | length'
-# → "0.2.0"
-# → 8     (or however many shape clusters the catalog reports)
+isotopo capabilities | jq '{version, shapes: (.shapes | length)}'
 
 # Round-trip render
 echo 'a -> b -> c' > /tmp/test.d2
@@ -124,5 +133,5 @@ The Go module cache for d2 / dependencies lives under
 
 ## Next step
 
-→ [`02-first-scene.md`](02-first-scene.md) — render your first
+→ [`02-first-scene.md`](./02-first-scene.md) — render your first
 multi-element architecture diagram.

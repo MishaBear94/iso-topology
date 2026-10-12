@@ -1,4 +1,7 @@
-# 02 — Your first scene
+---
+title: "Your first scene"
+description: "Render a small service architecture from D2 and inspect its output."
+---
 
 We've installed `isotopo`. Now we'll render a real architecture
 diagram — three layers of services with arrows between them.
@@ -27,8 +30,7 @@ worker -> db:      write
 
 Three things to notice:
 
-1. **Every line that has no `->` declares a node**. `id: Label
-   { shape: ... }` is the full form; `id: Label` is the most common
+1. **Every line that has no `->` declares a node**. `id: Label { shape: ... }` is the full form; `id: Label` is the most common
    short form.
 2. **Shapes are picked by name**. `person`, `cylinder`, etc. — the
    full list is in [`reference/dsl-d2.md`](../reference/dsl-d2.md) or
@@ -80,5 +82,5 @@ You'll get a JSON error with `"suggest": "person"`. Apply, re-run.
 
 ## Next step
 
-→ [`03-grouping.md`](03-grouping.md) — wrap related parts in a
+→ [`03-grouping.md`](./03-grouping.md) — wrap related parts in a
 labeled container.

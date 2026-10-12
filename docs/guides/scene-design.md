@@ -1,11 +1,14 @@
-# Scene design — making diagrams that look designed
+---
+title: "Design a scene"
+description: "Choose layouts, hierarchy, colors, and connector styles for readable architectures."
+---
 
 This is the visual style guide behind the
-[showcase gallery](../../samples/topology). The DSL reference tells
+[showcase gallery](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology). The DSL reference tells
 you what every field does; this guide tells you which fields to reach
 for so the output looks like a launch-post illustration instead of a
 clip-art collage. Humans and agents follow the same rules — the
-[agent skill](../../skills/draw-iso-diagram/SKILL.md) is a condensed
+[agent skill](https://github.com/MishaBear94/iso-topology/blob/main/skills/draw-iso-diagram/SKILL.md) is a condensed
 version of this page.
 
 ## The five rules
@@ -45,12 +48,12 @@ the solver do geometry (all gaps in cells):
 
 | Composition | One-liner | Worked example |
 |---|---|---|
-| hub-and-spoke | `layout: {mode: ring, gap: 2.6}` — first child is the hub | [ai-platform](../../samples/topology/ai-platform/input.yaml) |
-| dashboard / board | `group` + `layout: {mode: grid, cols: N}` — substrate auto-sizes | [langchain-app](../../samples/topology/langchain-app/input.yaml) |
-| layered flow | anchor part + `place` chains (`rightOf`, `behind`) | [lakehouse-agent](../../samples/topology/lakehouse-agent/input.yaml) |
-| dual plane | two `layout: row` groups, the second `place: {inFrontOf: …}` | [rag-pipeline](../../samples/topology/rag-pipeline/input.yaml) |
-| metric bars + ghosts | bars in a `place` chain, ghosts `place: {above: <bar>}` | [training-compute](../../samples/topology/training-compute/input.yaml) |
-| exploded plate stack (PCB) | plates chained with `above` + a `wz` lift each | [platform-board](../../samples/topology/platform-board/input.yaml) |
+| hub-and-spoke | `layout: {mode: ring, gap: 2.6}` — first child is the hub | [ai-platform](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/ai-platform/input.yaml) |
+| dashboard / board | `group` + `layout: {mode: grid, cols: N}` — substrate auto-sizes | [langchain-app](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/langchain-app/input.yaml) |
+| layered flow | anchor part + `place` chains (`rightOf`, `behind`) | [lakehouse-agent](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/lakehouse-agent/input.yaml) |
+| dual plane | two `layout: row` groups, the second `place: {inFrontOf: …}` | [rag-pipeline](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/rag-pipeline/input.yaml) |
+| metric bars + ghosts | bars in a `place` chain, ghosts `place: {above: <bar>}` | [training-compute](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/training-compute/input.yaml) |
+| exploded plate stack (PCB) | plates chained with `above` + a `wz` lift each | [platform-board](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/platform-board/input.yaml) |
 | stair | each tile `{rightOf: prev, inFrontOf: prev, gap: 0}` | [RECIPES § stair](../agent/RECIPES.md#i-want-a-staircase-climbing-the-iso-axis) |
 
 ## Ship a design system with `theme.presets`

@@ -124,7 +124,7 @@ func writeIconIndex() error {
 	}
 
 	var b strings.Builder
-	b.WriteString("# Built-in icons\n\n")
+	b.WriteString("---\ntitle: Built-in icons\ndescription: Browse the built-in glyphs, brand logos, and their icon URIs.\n---\n\n")
 	b.WriteString("Generated from `iso25d.IconCatalog()` — the icons themselves are\n")
 	b.WriteString("maintained as Go string literals in `iso25d/brand_icons.go`, and\n")
 	b.WriteString("this index (plus the SVG files in `docs/assets/icons/`) is\n")
@@ -146,8 +146,8 @@ func writeIconIndex() error {
 		if ic.Kind != "glyph" {
 			continue
 		}
-		fmt.Fprintf(&b, "| <img src=\"../assets/icons/glyph-%s.svg\" width=\"22\"> | `%s` | `%s` | %s |\n",
-			ic.Name, ic.Name, ic.URI, ic.Description)
+		fmt.Fprintf(&b, "| <img src=\"../assets/icons/glyph-%s.svg\" width=\"22\" alt=\"%s\" /> | `%s` | `%s` | %s |\n",
+			ic.Name, ic.Name, ic.Name, ic.URI, ic.Description)
 	}
 	b.WriteString("\n## Brand logos (Simple Icons)\n\n")
 	b.WriteString("Real logos vendored from [Simple Icons](https://simpleicons.org)\n")
@@ -160,8 +160,8 @@ func writeIconIndex() error {
 		if ic.Kind != "si" {
 			continue
 		}
-		fmt.Fprintf(&b, "| <img src=%q width=%q> | `%s` | `%s` | %s |\n",
-			"../assets/icons/si-"+ic.Name+".svg", "22", ic.Name, ic.URI, ic.Description)
+		fmt.Fprintf(&b, "| <img src=%q width=%q alt=%q /> | `%s` | `%s` | %s |\n",
+			"../assets/icons/si-"+ic.Name+".svg", "22", ic.Name, ic.Name, ic.URI, ic.Description)
 	}
 	b.WriteString("\n## Brand letter badges\n\n")
 	b.WriteString("Generated monogram fallbacks for marks that are not vendored.\n\n")
@@ -170,8 +170,8 @@ func writeIconIndex() error {
 		if ic.Kind != "brand" {
 			continue
 		}
-		fmt.Fprintf(&b, "| <img src=\"../assets/icons/brand-%s.svg\" width=\"22\"> | `%s` | `%s` | %s |\n",
-			ic.Name, ic.Name, ic.URI, ic.Description)
+		fmt.Fprintf(&b, "| <img src=\"../assets/icons/brand-%s.svg\" width=\"22\" alt=\"%s\" /> | `%s` | `%s` | %s |\n",
+			ic.Name, ic.Name, ic.Name, ic.URI, ic.Description)
 	}
 	b.WriteString("\n## Adding an icon\n\n")
 	b.WriteString("Add the 24×24 path markup to `glyphIcons` (plus a one-line entry\n")
@@ -192,8 +192,8 @@ func writeIconIndex() error {
 func updatePromptTemplate() error {
 	const (
 		path  = "docs/agent/PROMPT_TEMPLATE.md"
-		begin = "<!-- BEGIN GENERATED: minimal-template (gen-docs) -->"
-		end   = "<!-- END GENERATED: minimal-template -->"
+		begin = "[//]: # (BEGIN GENERATED: minimal-template)"
+		end   = "[//]: # (END GENERATED: minimal-template)"
 	)
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -285,14 +285,14 @@ WHEN UNSURE:
 // agent finds the fixture that demonstrates a given primitive.
 func writeSamplesIndex() error {
 	var b strings.Builder
-	b.WriteString("# Samples index\n\n")
+	b.WriteString("---\ntitle: Sample sources\ndescription: Find example scenes and individual shapes in the golden-tested fixture collection.\n---\n\n")
 	b.WriteString("Generated from `samples/*/*/input.*` header comments — run\n")
 	b.WriteString("`go run ./tools/gen-docs` to refresh. Every fixture is a\n")
 	b.WriteString("golden-tested, copy-paste-ready example; `expected.svg` next to\n")
 	b.WriteString("each input is the rendered output.\n\n")
 	b.WriteString("Reading order for agents: start with the fixture whose\n")
 	b.WriteString("description matches your task, imitate its structure, then check\n")
-	b.WriteString("[`RECIPES.md`](RECIPES.md) for the primitive-level grammar.\n")
+	b.WriteString("[`RECIPES.md`](./RECIPES.md) for the primitive-level grammar.\n")
 
 	for _, category := range []string{"node", "topology"} {
 		fmt.Fprintf(&b, "\n## samples/%s\n\n", category)
@@ -310,7 +310,7 @@ func writeSamplesIndex() error {
 			if input == "" {
 				continue
 			}
-			fmt.Fprintf(&b, "| [`%s`](../../samples/%s/%s/%s) | %s |\n",
+			fmt.Fprintf(&b, "| [`%s`](https://github.com/MishaBear94/iso-topology/blob/main/samples/%s/%s/%s) | %s |\n",
 				e.Name(), category, e.Name(), input, desc)
 		}
 	}
@@ -359,6 +359,12 @@ func sampleHeader(dir string) (desc, input string) {
 	return "", ""
 }
 
+// markdownProse escapes plain catalog text for both Markdown tables and MDX.
+// Syntax examples are emitted separately inside code spans or fences.
+func markdownProse(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "{", "&#123;", "}", "&#125;", "|", "\\|").Replace(s)
+}
+
 // writeCapabilitiesMarkdown renders CapabilityReport() into a
 // human-skimmable markdown file. Same data as `isotopo capabilities`
 // but committed so it's readable on GitHub without running the CLI.
@@ -366,7 +372,7 @@ func writeCapabilitiesMarkdown() error {
 	cap := isotopo.CapabilityReport()
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "# Capabilities — v%s\n\n", cap.Version)
+	fmt.Fprintf(&b, "---\ntitle: Capabilities\ndescription: The generated contract for supported inputs, shapes, primitives, and styles.\n---\n\nCapability report version: **%s**.\n\n", cap.Version)
 	b.WriteString("Generated from `CapabilityReport()`. Do not edit by hand — run\n")
 	b.WriteString("`go run ./tools/gen-docs` to regenerate after a code change.\n\n")
 	b.WriteString("Same content as `isotopo capabilities` JSON, but markdown for skim-reading.\n\n")
@@ -374,13 +380,13 @@ func writeCapabilitiesMarkdown() error {
 	b.WriteString("## Input formats\n\n")
 	b.WriteString("| Extension | Layout | Description |\n|---|---|---|\n")
 	for _, in := range cap.Inputs {
-		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", in.Extension, in.Layout, in.Description)
+		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", in.Extension, in.Layout, markdownProse(in.Description))
 	}
 
 	b.WriteString("\n## Layout engines (.d2 input)\n\n")
 	b.WriteString("| Name | Edges | Description |\n|---|---|---|\n")
 	for _, l := range cap.Layouts {
-		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", l.Name, l.EdgeStyle, l.Description)
+		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", l.Name, l.EdgeStyle, markdownProse(l.Description))
 	}
 
 	b.WriteString("\n## Shapes\n\n")
@@ -391,7 +397,7 @@ func writeCapabilitiesMarkdown() error {
 	for _, s := range cap.Shapes {
 		aliases := "`" + strings.Join(s.AcceptedAs, "`, `") + "`"
 		fmt.Fprintf(&b, "| **%s** | %s | %.1f | %s |\n",
-			s.IsoName, aliases, s.HeightHint, s.Notes)
+			s.IsoName, aliases, s.HeightHint, markdownProse(s.Notes))
 	}
 
 	b.WriteString("\n## Composition primitives\n\n")
@@ -399,7 +405,7 @@ func writeCapabilitiesMarkdown() error {
 		fmt.Fprintf(&b, "### `%s`\n\n", p.Name)
 		fmt.Fprintf(&b, "**Where:** `%s`\n\n", p.Where)
 		fmt.Fprintf(&b, "**Syntax:** `%s`\n\n", p.Syntax)
-		fmt.Fprintf(&b, "%s\n\n", p.Purpose)
+		fmt.Fprintf(&b, "%s\n\n", markdownProse(p.Purpose))
 		if len(p.Fields) > 0 {
 			b.WriteString("| Field | Meaning |\n|---|---|\n")
 			keys := make([]string, 0, len(p.Fields))
@@ -408,7 +414,7 @@ func writeCapabilitiesMarkdown() error {
 			}
 			sort.Strings(keys)
 			for _, k := range keys {
-				fmt.Fprintf(&b, "| `%s` | %s |\n", k, p.Fields[k])
+				fmt.Fprintf(&b, "| `%s` | %s |\n", k, markdownProse(p.Fields[k]))
 			}
 			b.WriteString("\n")
 		}
@@ -418,7 +424,7 @@ func writeCapabilitiesMarkdown() error {
 	b.WriteString("Every field under each `style.*` sub-block.\n\n")
 	b.WriteString("| Block | Fields |\n|---|---|\n")
 	for _, g := range cap.StyleKeys {
-		fmt.Fprintf(&b, "| `%s` | %s |\n", g.Block, "`"+strings.Join(g.Fields, "`, `")+"`")
+		fmt.Fprintf(&b, "| `%s` | %s |\n", g.Block, "`"+strings.ReplaceAll(strings.Join(g.Fields, "`, `"), "|", "\\|")+"`")
 	}
 
 	b.WriteString("\n## Enums\n\n")
@@ -436,8 +442,8 @@ func writeCapabilitiesMarkdown() error {
 	}
 
 	b.WriteString("\n## See also\n\n")
-	b.WriteString("- [`RECIPES.md`](RECIPES.md) — task → DSL primitive lookup\n")
-	b.WriteString("- [`schema/dsl.schema.json`](schema/dsl.schema.json) — JSON Schema for local lint\n")
+	b.WriteString("- [`RECIPES.md`](./RECIPES.md) — task → DSL primitive lookup\n")
+	b.WriteString("- [`schema/dsl.schema.json`](./schema/dsl.schema.json) — JSON Schema for local lint\n")
 	b.WriteString("- [`../reference/dsl-yaml.md`](../reference/dsl-yaml.md) — full YAML grammar with examples\n")
 
 	return os.WriteFile("docs/agent/CAPABILITIES.md", []byte(b.String()), 0o644)

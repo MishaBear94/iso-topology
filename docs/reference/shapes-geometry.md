@@ -1,4 +1,7 @@
-# Shape Geometry Reference
+---
+title: "Shapes and geometry"
+description: "Geometry parameters, shapes, and the relationship between dimensions and projection."
+---
 
 iso-topology ships with a growing library of 3D shape families beyond the
 classic box. Each family has a **shape provider** that computes projected

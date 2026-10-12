@@ -1,4 +1,7 @@
-# Usage
+---
+title: "CLI reference"
+description: "Commands, flags, output files, and exit codes for isotopo."
+---
 
 iso-topology has two faces: a CLI (`isotopo`) and a Go library
 (`github.com/MarkovWangRR/iso-topology`). Both expose the same
@@ -9,7 +12,7 @@ rendering pipeline.
 ### `isotopo render` — produce SVG + embed assets
 
 ```
-isotopo render [--layout dagre|elk] [--projection iso|top] <input> <output-dir>
+isotopo render [--layout dagre|elk] [--projection iso|top] [--readable] [--theme <name>] [--no-repair] [--report] <input> <output-dir>
 ```
 
 | Argument | Meaning |
@@ -18,12 +21,16 @@ isotopo render [--layout dagre|elk] [--projection iso|top] <input> <output-dir>
 | `--layout elk` | orthogonal right-angle edges with obstacle avoidance |
 | `--projection iso` | default; 2.5D isometric view |
 | `--projection top` | flat top-down **plan view** — footprints + orthogonal edges, height dropped (good for reading the layout/flow). Overrides `canvas.projection`. |
+| `--readable` | use upright screen labels, contrast chips, and a padding floor where the document has not supplied its own settings |
+| `--theme <name>` | apply a built-in design system; inspect available names under `themes` in `isotopo capabilities` |
+| `--no-repair` | skip the automatic projection-repair pass |
+| `--report` | write the repair report to `report.json` in the output directory |
 | `<input>` | path to `.yaml`, `.json`, or `.d2` (or `-` for stdin) |
 | `<output-dir>` | directory to write `topology.{svg,html,…}` and `nodes/<id>.{svg,html,yaml}` |
 
 The `--layout` flag is consulted only for `.d2` input (YAML/JSON
 already encode placement). The projection can also be set per-document
-with `canvas.projection` (see [DSL/YAML](dsl-yaml.md)). Output structure
+with `canvas.projection` (see [DSL/YAML](./dsl-yaml.md)). Output structure
 is documented in [OUTPUTS.md](../reference/output-layout.md).
 
 `render` runs the full validator first (issues go to stderr) and returns
@@ -62,7 +69,7 @@ gen-dsl | isotopo render - ./out
 isotopo capabilities
 ```
 
-Emits a JSON document with five top-level keys:
+Emits a JSON document describing the live feature contract, including:
 
 | Key | Contents |
 |---|---|
@@ -72,6 +79,8 @@ Emits a JSON document with five top-level keys:
 | `shapes` | every shape name and its aliases |
 | `primitives` | composition primitives (group, stack, annotation, …) with one-line syntax |
 | `style_keys` | every field inside `palette` / `stroke` / `text` / `effects` |
+| `themes` | available built-in design systems |
+| `enums` | accepted values for fields with a closed vocabulary |
 
 Designed for agents to read once at startup so they can generate
 valid DSL without consulting source code. Example:
@@ -189,7 +198,44 @@ isotopo evaluate scene.yaml ./out
 ```
 
 Library equivalents: `EvaluatePlan` / `EvaluateIso` / `RenderPlanAnnotated`
-(see [API reference](api.md)).
+(see [API reference](./api.md)).
+
+### `isotopo repair` — inspect or persist automatic fixes
+
+```bash
+isotopo repair scene.yaml
+isotopo repair scene.yaml --write
+isotopo repair scene.yaml --compose --write
+```
+
+Without `--write`, this prints a fix report without modifying the input. With
+`--write`, it persists supported fixes while preserving comments. `--compose`
+also enables bounded alignment snapping. Exit code `0` means no repairs were
+found; `2` means repairs were found, including when they were written.
+
+`render` applies its automatic repair pass to the rendered document by default.
+Use `--no-repair` to inspect the authored scene without that pass, or `--report`
+to save a report of what changed. Review the output: automatic repair does not
+guarantee that every possible layout problem has been resolved.
+
+### `isotopo snapshot` — rasterize a scene
+
+```bash
+isotopo snapshot scene.yaml ./out
+```
+
+Writes `topology.png` using the SVG viewBox as its viewport. This requires `resvg`
+or ImageMagick. It accepts `--no-repair` and `--report`, like `render`.
+
+### `isotopo preview` — render a subset
+
+```bash
+isotopo preview scene.yaml ./selection.svg api db
+```
+
+Select nodes by ID, a container and its children, or a connector such as
+`edge:0`. The subset is laid out and cropped independently. Use `-` as the
+output path to write SVG to stdout.
 
 ## `isotopo serve` — the Studio
 
@@ -233,4 +279,4 @@ live re-render (the toolbar tells you to start `isotopo serve`).
 The CLI is a thin wrapper over the Go engine. The full library API —
 parsing, rendering, the stateless **edit** contract (`ApplyOp` /
 `EditOp`), types, and the `yamledit` / `iso25d` sub-packages — lives in
-the single **[API reference](api.md)**.
+the single **[API reference](./api.md)**.

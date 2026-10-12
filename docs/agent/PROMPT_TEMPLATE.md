@@ -1,4 +1,7 @@
-# Agent prompt template
+---
+title: "Prompt template"
+description: "A reusable prompt with a generated capability contract for diagram-authoring agents."
+---
 
 Drop-in system prompt for an LLM that emits iso-topology DSL. Tested
 with Claude, GPT-4-class, and small local models. Customize the
@@ -10,7 +13,7 @@ The block below is GENERATED from `CapabilityReport()` — run
 `go run ./tools/gen-docs` after any DSL change and it stays current.
 Don't edit between the sentinels.
 
-<!-- BEGIN GENERATED: minimal-template (gen-docs) -->
+[//]: # (BEGIN GENERATED: minimal-template)
 ```text
 You are an assistant that produces iso-topology DSL. iso-topology
 renders 2.5D isometric architecture diagrams from textual DSL.
@@ -77,7 +80,7 @@ WHEN UNSURE:
 {user's actual prompt here}
 </TASK>
 ```
-<!-- END GENERATED: minimal-template -->
+[//]: # (END GENERATED: minimal-template)
 
 ## How to use this
 

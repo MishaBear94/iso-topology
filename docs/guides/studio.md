@@ -1,4 +1,7 @@
-# isotopo Studio — the live diagram workbench
+---
+title: "Studio"
+description: "Edit diagrams in a local browser workbench with live source and canvas interactions."
+---
 
 Studio is the interactive page you get from `isotopo serve` (and, in a
 degraded static form, from every `isotopo render` output as

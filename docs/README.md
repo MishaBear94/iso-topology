@@ -1,5 +1,9 @@
 # iso-topology docs
 
+This directory is also the source of the official Mintlify documentation site.
+Start with [Quickstart](quickstart.mdx), browse the [Gallery](gallery.mdx), or read
+[Maintaining the site](MAINTAINING.md) for preview, validation, and deployment.
+
 This tree is organized by purpose, not topic — pick the section that
 matches what you're trying to do.
 

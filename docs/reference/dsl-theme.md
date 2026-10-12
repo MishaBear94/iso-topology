@@ -1,4 +1,7 @@
-# Style and Theme
+---
+title: "Styles and themes"
+description: "Configure colors, strokes, typography, effects, and reusable presets."
+---
 
 Every iso part has a `Style` that controls its visual presentation —
 fills, stroke, label typography, opacity, etc. The `Theme` block on a

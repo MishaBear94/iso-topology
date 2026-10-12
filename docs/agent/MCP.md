@@ -1,4 +1,7 @@
-# MCP server
+---
+title: "MCP server"
+description: "Connect a tool-using agent to the local diagram engine over stdio."
+---
 
 `isotopo-mcp` exposes the agent loop as Model Context Protocol tools
 over stdio, so Claude Code / Claude Desktop / Cursor / any MCP client
@@ -7,7 +10,7 @@ can draw isometric diagrams without shelling out to the CLI.
 ## Install
 
 ```bash
-go install github.com/MarkovWangRR/iso-topology/cmd/isotopo-mcp@latest
+go install github.com/MarkovWangRR/iso-topology/cmd/isotopo-mcp@main
 ```
 
 Single static binary, no runtime deps — same as the CLI.
@@ -52,8 +55,8 @@ doesn't inherit `$GOPATH/bin` on PATH.)
 
 1. `iso_capabilities` → learn the DSL surface.
 2. Emit YAML following the positioning rules in
-   [PROMPT_TEMPLATE.md](PROMPT_TEMPLATE.md) (or install the
-   [`draw-iso-diagram` skill](../../skills/draw-iso-diagram/SKILL.md),
+   [PROMPT_TEMPLATE.md](./PROMPT_TEMPLATE.md) (or install the
+   [`draw-iso-diagram` skill](https://github.com/MishaBear94/iso-topology/blob/main/skills/draw-iso-diagram/SKILL.md),
    which encodes them).
 3. `iso_validate` → apply `suggest` values until `issues` is empty.
 4. `iso_evaluate` → fix layout until `crossings` and `tunnels` are 0, then

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "iso-topology",
+  "description": "Turn text into isometric architecture diagrams. Learn the CLI, Studio, YAML and D2, Go library, and MCP tools.",
+  "colors": { "primary": "#2563EB", "light": "#60A5FA", "dark": "#1D4ED8" },
+  "appearance": { "default": "light" },
+  "logo": { "light": "/assets/wordmark-light.svg", "dark": "/assets/wordmark-dark.svg", "href": "/" },
+  "favicon": "/assets/favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          { "group": "Start here", "pages": ["index", "quickstart", "gallery"] },
+          { "group": "Learn by building", "pages": ["getting-started/01-install", "getting-started/02-first-scene", "getting-started/03-grouping", "getting-started/04-replicas-annotations", "getting-started/05-publishing"] },
+          { "group": "Guides", "pages": ["guides/studio", "guides/scene-design", "guides/troubleshooting", "guides/extending"] },
+          { "group": "Understand the renderer", "pages": ["concepts/why-isometric"] }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          { "group": "Interfaces", "pages": ["reference/cli", "reference/api", "reference/output-layout"] },
+          { "group": "Diagram language", "pages": ["reference/dsl-yaml", "reference/dsl-d2", "reference/dsl-theme", "reference/shapes-geometry", "agent/ICONS"] }
+        ]
+      },
+      {
+        "tab": "AI & agents",
+        "groups": [
+          { "group": "Connect an agent", "pages": ["getting-started/00-onboarding", "agent/MCP", "agent/PROMPT_TEMPLATE"] },
+          { "group": "Author reliable diagrams", "pages": ["agent/CAPABILITIES", "agent/RECIPES", "agent/SAMPLES"] }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [{ "label": "Report an issue", "href": "https://github.com/MishaBear94/iso-topology/issues" }],
+    "primary": { "type": "github", "href": "https://github.com/MishaBear94/iso-topology" }
+  },
+  "contextual": { "options": ["copy", "view"] },
+  "footer": { "socials": { "github": "https://github.com/MishaBear94/iso-topology" } },
+  "redirects": [{ "source": "/introduction", "destination": "/" }]
+}

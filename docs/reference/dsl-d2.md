@@ -1,4 +1,7 @@
-# `.d2` input
+---
+title: "D2"
+description: "Use D2 graph syntax with automatic layout and isometric rendering."
+---
 
 `.d2` is the [terrastruct/d2](https://github.com/terrastruct/d2) graph
 DSL. iso-topology accepts `.d2` files as input and runs the d2

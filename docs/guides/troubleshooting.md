@@ -1,4 +1,7 @@
-# Troubleshooting
+---
+title: "Troubleshooting"
+description: "Resolve installation, rendering, validation, and output-quality issues."
+---
 
 Quick answers to the failure modes people hit. Search by symptom.
 

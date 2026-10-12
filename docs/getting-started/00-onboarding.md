@@ -1,4 +1,7 @@
-# 00 — Zero to diagram: paste this into Claude
+---
+title: "Agent onboarding"
+description: "Give a coding agent the installation steps, capabilities, and workflow for drawing diagrams."
+---
 
 You're on a fresh machine and you use Claude Code (or any capable
 coding agent). You shouldn't have to read install docs — the agent
@@ -14,8 +17,8 @@ password or a decision only I can make. Reply in the language I use.
 - Ensure Go ≥ 1.25 (`go version`); if missing, install it with the
   system package manager (macOS: `brew install go`; Debian/Ubuntu:
   `sudo apt install golang-go`; otherwise https://go.dev/dl).
-- `go install github.com/MarkovWangRR/iso-topology/cmd/isotopo@latest`
-- `go install github.com/MarkovWangRR/iso-topology/cmd/isotopo-mcp@latest`
+- `go install github.com/MarkovWangRR/iso-topology/cmd/isotopo@main`
+- `go install github.com/MarkovWangRR/iso-topology/cmd/isotopo-mcp@main`
 - Ensure `$(go env GOPATH)/bin` is on PATH for this session.
 - Install the drawing skill so future sessions already know the
   workflow:
@@ -96,4 +99,4 @@ agent edits `input.yaml` and re-renders the same folder, so the
 | wrong vibe entirely | point at a gallery scene: "make it look like clickhouse-hub" |
 
 Prefer doing things by hand instead? The manual path starts at
-[01-install.md](01-install.md).
+[01-install.md](./01-install.md).

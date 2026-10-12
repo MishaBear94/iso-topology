@@ -1,0 +1,92 @@
+---
+title: "Your first diagram"
+sidebarTitle: "Quickstart"
+description: "Install iso-topology, render a D2 diagram, and open the same source in Studio."
+---
+
+You need **Go 1.25 or later** on macOS, Linux, or Windows. For the library install
+and build-from-source options, see [Installation](/getting-started/01-install).
+
+## 1. Install the CLI
+
+```bash
+go install github.com/MarkovWangRR/iso-topology/cmd/isotopo@main
+```
+
+Make sure your Go binary directory (`$GOBIN`, or `$(go env GOPATH)/bin` by default)
+is on your `PATH`. Run `isotopo capabilities` to verify the installation.
+
+<Note>
+  These docs track the `main` branch. Use `@main` for the features documented here,
+  or `@latest` for the newest tagged release, which may have fewer features.
+
+  The Go module path is still `github.com/MarkovWangRR/iso-topology`. The source
+  repository now lives at [MishaBear94/iso-topology](https://github.com/MishaBear94/iso-topology).
+</Note>
+
+## 2. Describe a small architecture
+
+Create a file called `services.d2`:
+
+```d2 services.d2
+user: User { shape: person }
+api: API Gateway
+worker: Worker
+db: Database { shape: cylinder }
+
+user -> api: HTTPS
+api -> worker: enqueue
+worker -> db: write
+```
+
+D2 computes the layout from the graph. The renderer turns the nodes into
+isometric shapes and draws their connections.
+
+## 3. Render it
+
+```bash
+isotopo render services.d2 ./out
+```
+
+Open `out/topology.html` in your browser to inspect the diagram. Use
+`out/topology.svg` wherever you need a vector image.
+
+<Tip>
+  To inspect the same architecture from above, run
+  `isotopo render --projection top services.d2 ./out-plan`.
+</Tip>
+
+## 4. Refine it in Studio
+
+```bash
+isotopo serve services.d2
+```
+
+Open [http://localhost:8731](http://localhost:8731). Studio provides a live source
+editor, canvas interactions, and export tools. See the [Studio guide](/guides/studio)
+for the supported editing operations and save behavior.
+
+## 5. Check and share
+
+```bash
+isotopo validate services.d2
+```
+
+Validation returns structured issues with paths and suggestions. Exit code `0`
+means clean, `2` means warnings, and `3` means errors. A diagram can render with
+warnings; inspect those warnings before publishing it.
+
+Keep `services.d2` in version control. Embed the generated SVG in your README:
+
+```markdown
+![Service architecture](./out/topology.svg)
+```
+
+<CardGroup cols={2}>
+  <Card title="Add groups and boundaries" icon="object-group" href="/getting-started/03-grouping">
+    Continue the tutorial with nested services and labeled containers.
+  </Card>
+  <Card title="Browse example sources" icon="code" href="/agent/SAMPLES">
+    Start from an existing scene, then adapt it to your architecture.
+  </Card>
+</CardGroup>

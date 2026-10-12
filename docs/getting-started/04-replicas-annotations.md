@@ -1,4 +1,7 @@
-# 04 — Replicas, callouts, ground grid
+---
+title: "Replicas and annotations"
+description: "Add stacked replicas, explanatory callouts, and an isometric grid."
+---
 
 Two primitives left to introduce:
 
@@ -113,5 +116,5 @@ That's all four DSL primitives at once: **canvas grid**, **theme**,
 
 ## Next step
 
-→ [`05-publishing.md`](05-publishing.md) — drop the SVG into docs,
+→ [`05-publishing.md`](./05-publishing.md) — drop the SVG into docs,
 slides, or LLM context.

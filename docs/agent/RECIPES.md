@@ -1,4 +1,7 @@
-# DSL recipes
+---
+title: "Recipes"
+description: "Map common architecture-diagram tasks to supported DSL primitives."
+---
 
 Task-indexed quick reference. "I want to express X — which primitive
 do I reach for?" Each recipe is copy-paste ready.
@@ -12,8 +15,8 @@ budget, composition patterns) see the
 grammar see [`../reference/dsl-yaml.md`](../reference/dsl-yaml.md)
 and [`../reference/dsl-d2.md`](../reference/dsl-d2.md). For the
 machine-readable inventory call `isotopo capabilities` or read
-[`CAPABILITIES.md`](CAPABILITIES.md). For complete worked scenes see
-the [samples index](SAMPLES.md).
+[`CAPABILITIES.md`](./CAPABILITIES.md). For complete worked scenes see
+the [samples index](./SAMPLES.md).
 
 **The one rule that matters:** never hand-compute coordinates.
 Position parts with `layout` (containers) and `place` (sibling
@@ -58,7 +61,7 @@ corner-to-corner):
 - {id: s3, shape: rectangle, place: {rightOf: s2, inFrontOf: s2, gap: 0}, geom: {w: 120, d: 120, h: 70}}
 ```
 
-See [`samples/topology/rag-pipeline`](../../samples/topology/rag-pipeline/input.yaml)
+See [`samples/topology/rag-pipeline`](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/rag-pipeline/input.yaml)
 for a two-step stair anchoring a full scene (substrates along the
 iso diagonal).
 
@@ -78,7 +81,7 @@ One container, `layout: grid` — the substrate auto-sizes:
 ```
 
 `mode: row` marches along world +x, `column` along +y. See
-[`samples/topology/langchain-app`](../../samples/topology/langchain-app/input.yaml)
+[`samples/topology/langchain-app`](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/langchain-app/input.yaml)
 for 2×2 grid service boards carrying glyph icons.
 
 ### I want a part stacked ON TOP of another (plinth, ghost volume)
@@ -93,7 +96,7 @@ footprint, no copied heights:
            stroke: {color: "#A5B4FC", width: 1.2, dash: "4 4"}}}
 ```
 
-See [`samples/topology/training-compute`](../../samples/topology/training-compute/input.yaml).
+See [`samples/topology/training-compute`](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/training-compute/input.yaml).
 
 > **Connectors + elevation:** `above` / `wz` is for decorative parts
 > with no wiring. If a stacked part needs a connector, the rule below
@@ -134,7 +137,7 @@ nodes:
       - { id: sat2, ... }        # …and around, clockwise
 ```
 
-See [`samples/topology/ai-platform`](../../samples/topology/ai-platform/input.yaml)
+See [`samples/topology/ai-platform`](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/ai-platform/input.yaml)
 — the eight-tile ring is exactly this.
 
 ### I want different gaps per axis
@@ -375,7 +378,7 @@ kubernetes, terraform, openai, anthropic, pytorch, grafana, … with
 the same `/light` and `/RRGGBB` color variants. Letter badges
 (`iso://brand/<name>`) remain as fallbacks for non-vendored marks.
 Any other `icon:` value is treated as a URL / data-URI. Full
-browsable index with previews: [ICONS.md](ICONS.md).
+browsable index with previews: [ICONS.md](./ICONS.md).
 
 ### I want flat / low / tall extrusion
 
@@ -479,7 +482,7 @@ or around solid parts freely:
 ### I want a film-grain / print texture
 
 `effects.grain` overlays monochrome noise — the editorial "print ad"
-register (see [`duckdb-handdrawn`](../../samples/topology/duckdb-handdrawn/input.yaml)):
+register (see [`duckdb-handdrawn`](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/duckdb-handdrawn/input.yaml)):
 
 ```yaml
 style:
@@ -572,9 +575,9 @@ nodes:
 
 Pick the central element, give it no `place` (it anchors the world
 origin), chain every satellite off it. See
-[`samples/topology/ai-platform`](../../samples/topology/ai-platform/input.yaml) /
-[`clickhouse-hub`](../../samples/topology/clickhouse-hub/input.yaml) /
-[`training-compute`](../../samples/topology/training-compute/input.yaml) —
+[`samples/topology/ai-platform`](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/ai-platform/input.yaml) /
+[`clickhouse-hub`](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/clickhouse-hub/input.yaml) /
+[`training-compute`](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/training-compute/input.yaml) —
 all coordinate-free.
 
 ## Validation
@@ -588,7 +591,7 @@ isotopo validate scene.yaml
 
 JSON output is JSONPath-located with "did you mean" suggestions —
 apply them programmatically and re-validate. See
-[`PROMPT_TEMPLATE.md`](PROMPT_TEMPLATE.md) for the agent-side
+[`PROMPT_TEMPLATE.md`](./PROMPT_TEMPLATE.md) for the agent-side
 boilerplate.
 
 ### What the validator checks

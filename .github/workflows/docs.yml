@@ -1,0 +1,55 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '**/*.go'
+      - 'samples/**'
+      - 'llms.txt'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '**/*.go'
+      - 'samples/**'
+      - 'llms.txt'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Check generated documentation
+        run: |
+          go run ./tools/gen-docs
+          git diff --exit-code -- docs/agent docs/assets/icons llms.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install the pinned Mintlify CLI
+        run: npm install --global mint@4.2.808
+      - name: Validate the documentation build
+        working-directory: docs
+        run: mint validate --telemetry false
+      - name: Check links, anchors, and redirects
+        working-directory: docs
+        run: mint broken-links --check-anchors --check-redirects --telemetry false

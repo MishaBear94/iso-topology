@@ -1,4 +1,7 @@
-# Extending isotopo
+---
+title: "Extend the renderer"
+description: "Add shapes, DSL primitives, layout engines, and editing controls."
+---
 
 This is the agent-targeted recipe doc. Each recipe answers "I want to
 add X — where do I touch?". Pair every code change with a golden-file

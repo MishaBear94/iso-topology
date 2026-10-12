@@ -1,4 +1,7 @@
-# API reference
+---
+title: "Go library and APIs"
+description: "Parse, render, validate, and edit diagrams through the programmable interfaces."
+---
 
 The single entry point for every programmable surface of iso-topology. Pick the
 surface you need — each row links to its authoritative contract; nothing is
@@ -6,10 +9,10 @@ documented in two places.
 
 | Surface | What it is | Contract |
 |---|---|---|
-| **DSL** (input format) | the YAML / JSON / d2 you author or an agent generates | [CAPABILITIES.md](../agent/CAPABILITIES.md) (generated) · [dsl.schema.json](../agent/schema/dsl.schema.json) (generated) · [YAML](dsl-yaml.md) · [d2](dsl-d2.md) · [Style/Theme](dsl-theme.md) |
+| **DSL** (input format) | the YAML / JSON / d2 you author or an agent generates | [CAPABILITIES.md](../agent/CAPABILITIES.md) (generated) · [dsl.schema.json](../agent/schema/dsl.schema.json) (generated) · [YAML](./dsl-yaml.md) · [d2](./dsl-d2.md) · [Style/Theme](./dsl-theme.md) |
 | **Go library** | import the engine — parse, render, validate, **and edit** DSL | **this page (below)** · generated godoc on [pkg.go.dev](https://pkg.go.dev/github.com/MarkovWangRR/iso-topology) |
 | **HTTP API** | the Studio server's `/api/*` endpoints | [studio.md → Endpoints](../guides/studio.md#endpoints-for-tooling) |
-| **CLI** | the `isotopo` command | [cli.md](cli.md) |
+| **CLI** | the `isotopo` command | [cli.md](./cli.md) |
 | **MCP** | tool server for Claude / Cursor / any MCP client | [MCP.md](../agent/MCP.md) |
 
 > The **canonical, always-current** Go API is the godoc on
@@ -29,12 +32,12 @@ go get github.com/MarkovWangRR/iso-topology@latest
 
 Three things you can do with the library:
 
-1. **Render** a DSL document to SVG — [Quick example](#quick-example-parse--render)
+1. **Render** a DSL document to SVG — [Quick example](#quick-example)
 2. **Edit** a DSL document by applying direct-manipulation ops (drag, set field,
    add/delete/duplicate) while preserving comments — [Editing for embedders](#direct-manipulation-editing-for-embedders)
 3. **Introspect** the DSL contract — `CapabilityReport()`
 
-### Quick example (parse → render)
+### Quick example
 
 ```go
 package main
@@ -456,7 +459,7 @@ isotopo.ApplyOpText(format string, src []byte, op EditOp) (newSrc []byte, err er
 ```
 
 Layout evaluation — score the connection quality from the flat geometry
-(see [`isotopo evaluate`](cli.md)):
+(see [`isotopo evaluate`](./cli.md)):
 
 ```go
 isotopo.EvaluatePlan(n, theme, canvas) *PlanReport          // plan-router routes
@@ -505,7 +508,7 @@ isotopo.CapabilityReport() Capabilities
 | `Annotation` | screen-space callout with a leader line |
 | `Canvas` | document-level backdrop (`background`, `grid`, `gridColor`, `gridStep`, `projection`) |
 | `Theme` | document-level default Style with optional per-shape overrides |
-| `Style` | `{palette, stroke, text, effects}` — see [Style/Theme](dsl-theme.md) |
+| `Style` | `{palette, stroke, text, effects}` — see [Style/Theme](./dsl-theme.md) |
 | `Issue` | a validation finding: `{Severity, Path, Message, Suggest}` |
 | `PlanReport` | layout-quality scorecard from `EvaluatePlan`/`EvaluateIso` (crossings, edges-through-nodes, backward edges, bends, length, flow axis) |
 | `LayoutEngine` | `LayoutDagre` (default) or `LayoutELK` |

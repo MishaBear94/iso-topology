@@ -1,4 +1,7 @@
-# YAML composite DSL
+---
+title: "YAML and JSON"
+description: "The composition language for shapes, groups, placement, and connections."
+---
 
 The YAML DSL gives you **designer-grade iso composition** — styled
 boards, hero scenes, stairs, infographics — without hand-computed
@@ -321,7 +324,7 @@ newlines and font size, expanding the export canvas when needed; this does not
 certify that a long caption fits inside its node or avoids other objects.
 Cloud captions without icons keep their original centroid; clouds with icons
 retain the existing bounded face layout. A partially unsupported block still
-falls back. See the [API clearance contract](api.md#measured-connector-labels)
+falls back. See the [API clearance contract](./api.md#measured-connector-labels)
 for the exact scope and fallbacks. No route, font size or authored text is
 changed by this refinement. The optional pass has bounded search work; if its
 budget runs out, unresolved labels retain their prior position and status.

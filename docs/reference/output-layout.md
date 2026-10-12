@@ -1,4 +1,7 @@
-# Output structure
+---
+title: "Output files"
+description: "Understand topology files, per-node assets, and export formats."
+---
 
 `isotopo render <input> <out>` produces a two-tier output tree:
 
@@ -75,7 +78,7 @@ The single element as a standalone iso SVG — no scene context, no
 neighbors. Perfect for inline embedding in docs:
 
 ```markdown
-The ![queue](out/nodes/queue.svg) holds pending jobs.
+The ![queue](./out/nodes/queue.svg) holds pending jobs.
 ```
 
 ### `nodes/<id>.html`
@@ -107,7 +110,7 @@ the elements in the scene at once.
 ### Markdown (GitHub, Notion, Obsidian)
 
 ```markdown
-![architecture](out/topology.svg)
+![architecture](./out/topology.svg)
 ```
 
 ### HTML

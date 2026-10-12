@@ -1,0 +1,81 @@
+---
+title: "Made with iso-topology"
+sidebarTitle: "Gallery"
+description: "Real diagrams, with source files you can use as starting points."
+mode: "wide"
+---
+
+Every diagram below comes from a scene in the repository. Open its source to
+inspect the layout, shapes, colors, and connections, then adapt it to your system.
+
+## Microservices
+
+A D2 graph with automatic layout: a useful starting point for a service overview.
+
+<Frame>
+  <img src="/assets/microservice.png" alt="Isometric microservices diagram with a user, gateway, services, and database" />
+</Frame>
+
+[Open the D2 source](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/microservice/input.d2)
+
+## Data fabric
+
+YAML composition with layout driven by the connections between components.
+
+<Frame>
+  <img src="/assets/data-fabric.png" alt="A data platform with connected ingestion, processing, and storage components" />
+</Frame>
+
+[Open the YAML source](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/data-fabric/input.yaml)
+
+## RAG pipeline
+
+Separate ingestion and retrieval paths, with recognizable infrastructure icons.
+
+<Frame>
+  <img src="/assets/rag-pipeline.png" alt="A retrieval augmented generation architecture with ingestion and query paths" />
+</Frame>
+
+[Open the YAML source](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/rag-pipeline/input.yaml)
+
+## Developer tooling
+
+A dark scene showing a CI/CD pipeline and its supporting services.
+
+<Frame>
+  <img src="/assets/devtool-pipeline.png" alt="A developer tool pipeline illustrated with glowing components on a dark background" />
+</Frame>
+
+[Open the YAML source](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/devtool-pipeline/input.yaml)
+
+## Layered platform
+
+An exploded view of a platform, using height and stacking to expose its layers.
+
+<Frame>
+  <img src="/assets/platform-board.png" alt="An exploded isometric platform showing multiple separated layers" />
+</Frame>
+
+[Open the YAML source](https://github.com/MishaBear94/iso-topology/blob/main/samples/topology/platform-board/input.yaml)
+
+## Make one your own
+
+Clone the repository, choose a source file, and render it locally:
+
+```bash
+git clone https://github.com/MishaBear94/iso-topology
+cd iso-topology
+go run ./cmd/isotopo render samples/topology/microservice/input.d2 ./out
+```
+
+The images on this page are illustrative snapshots. Rendering with a newer
+version can change placement and routing as the engine improves.
+
+<CardGroup cols={2}>
+  <Card title="All sample sources" icon="code" href="/agent/SAMPLES">
+    Browse the full index, including individual shapes and regression scenes.
+  </Card>
+  <Card title="Scene design guide" icon="pen-ruler" href="/guides/scene-design">
+    Choose a layout, visual hierarchy, and color system for your architecture.
+  </Card>
+</CardGroup>

@@ -1,4 +1,7 @@
-# Why isometric
+---
+title: "Why isometric?"
+description: "The design choices behind isometric architecture diagrams."
+---
 
 This is the design rationale. Skip if you just want to render
 something — start at [`getting-started/02-first-scene.md`](../getting-started/02-first-scene.md).

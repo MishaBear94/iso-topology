@@ -1,0 +1,63 @@
+---
+title: "Architecture, with another dimension."
+sidebarTitle: "Overview"
+description: "Build isometric architecture diagrams from text. Refine them in Studio. Keep the source alongside your code."
+mode: "wide"
+---
+
+<Frame caption="A microservice architecture rendered by iso-topology.">
+  <img src="/assets/microservice.png" alt="An isometric microservice architecture with services, a database, and connecting arrows" />
+</Frame>
+
+iso-topology is an open-source Go CLI and library for **2.5D isometric diagrams**.
+Describe nodes and connections in D2, or compose a scene in YAML or JSON. The
+renderer produces SVG you can use in documentation, design reviews, and READMEs.
+
+<CardGroup cols={2}>
+  <Card title="Render your first diagram" icon="terminal" href="/quickstart">
+    Install one Go binary and turn a few lines of D2 into an SVG.
+  </Card>
+  <Card title="Explore the gallery" icon="images" href="/gallery">
+    Browse real scenes and open the source behind each one.
+  </Card>
+</CardGroup>
+
+## From source to diagram
+
+<Steps>
+  <Step title="Describe the architecture">
+    Use D2 for automatic graph layout. Use YAML for explicit groups, replicas,
+    annotations, geometry, and styling.
+  </Step>
+  <Step title="Render and inspect">
+    Generate an SVG with the CLI. Open Studio to edit the source and adjust the
+    diagram visually. Validate the result before sharing it.
+  </Step>
+  <Step title="Keep the source">
+    Commit your diagram source with your project. Re-render it as the architecture
+    changes, or call the same renderer from your Go application.
+  </Step>
+</Steps>
+
+## Choose your workflow
+
+<CardGroup cols={2}>
+  <Card title="Work visually in Studio" icon="pen-ruler" href="/guides/studio">
+    Edit source, move nodes, adjust connections, and export from a local browser
+    workbench.
+  </Card>
+  <Card title="Compose with YAML" icon="layer-group" href="/reference/dsl-yaml">
+    Build grouped architectures with relative placement, icons, and reusable styles.
+  </Card>
+  <Card title="Integrate with Go" icon="code" href="/reference/api">
+    Parse, validate, render, and edit diagrams through the library API.
+  </Card>
+  <Card title="Give an agent the tools" icon="robot" href="/agent/MCP">
+    Discover capabilities, validate sources, evaluate layouts, and render through MCP.
+  </Card>
+</CardGroup>
+
+<Note>
+  SVG rendering runs locally. PNG and PDF export need an additional rasterizer;
+  see the [publishing guide](/getting-started/05-publishing).
+</Note>

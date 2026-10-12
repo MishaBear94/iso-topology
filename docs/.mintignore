@@ -1,0 +1,4 @@
+# Maintainer notes stay in the repository, outside the product documentation.
+design/
+testing.md
+MAINTAINING.md
