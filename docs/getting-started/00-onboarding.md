@@ -8,6 +8,16 @@ coding agent). You shouldn't have to read install docs — the agent
 should do every bit of setup and then teach YOU the workflow. Paste
 the block below into Claude, verbatim, and come back when it's done.
 
+## Give your agent the documentation
+
+The official site provides an [index for agents](https://iso-topology.mintlify.site/llms.txt)
+and the [full documentation as text](https://iso-topology.mintlify.site/llms-full.txt).
+Give your agent the index URL so it can find the relevant guides and references.
+For local scene validation, use the [JSON Schema](../agent/schema/dsl.schema.json)
+alongside `isotopo validate`.
+
+## Set up the toolchain
+
 ````markdown
 Set up the iso-topology diagram toolchain on this machine, then teach
 me how to use it. Work autonomously; only stop if something needs my
