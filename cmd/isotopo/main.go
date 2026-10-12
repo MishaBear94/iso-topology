@@ -36,7 +36,7 @@ import (
 // inputs (YAML/JSON have no layout step).
 var (
 	flagLayout     = "dagre"
-	flagProjection = "" // "" | iso | top — overrides canvas.projection
+	flagProjection = ""    // "" | iso | top — overrides canvas.projection
 	flagRepair     = true  // projection-repair loop runs by default (L1); --no-repair opts out
 	flagReport     = false // L2: emit report.json (R breakdown + located defects + patches)
 	flagReadable   = false // --readable: legibility-first "documentation" profile (#11)
@@ -563,6 +563,14 @@ func renderFile(in, outDir string) (int, error) {
 	if flagReadable {
 		isotopo.ApplyReadableProfile(doc)
 	}
+	// Resolve the projection before diagnostics and rendering so their
+	// collected screen-space geometry belongs to the same view.
+	if flagProjection != "" {
+		if doc.Canvas == nil {
+			doc.Canvas = &isotopo.Canvas{}
+		}
+		doc.Canvas.Projection = flagProjection
+	}
 	if flagRepair {
 		if iters, fixed := isotopo.RepairAndReport(doc); len(fixed) > 0 {
 			fmt.Fprintf(os.Stderr, "repaired (%d fix(es), %d iteration(s)):\n", len(fixed), iters)
@@ -571,10 +579,11 @@ func renderFile(in, outDir string) (int, error) {
 			}
 		}
 	}
-	// Build the report BEFORE rendering — rendering runs applyLayout, which
-	// clears group Layout in place and would strip the padding patches.
+	// Report screen labels come from the same emission as topology.svg.
+	var topologySVG string
 	if flagReport {
-		report := isotopo.BuildRenderReport(doc)
+		scene, report := isotopo.RenderSceneWithReport(doc)
+		topologySVG = scene.SVG
 		js, _ := json.MarshalIndent(report, "", "  ")
 		if err := os.MkdirAll(outDir, 0o755); err != nil {
 			return 1, err
@@ -607,7 +616,9 @@ func renderFile(in, outDir string) (int, error) {
 		}
 	}
 
-	topologySVG := renderTopologySVG(doc)
+	if !flagReport {
+		topologySVG = renderTopologySVG(doc)
+	}
 	// An empty topology SVG means the document resolved to no renderable
 	// scene (no scene node, or a scene with no parts). Writing a 0-byte
 	// topology.svg and exiting 0 is the worst case for an agent: a green
@@ -748,9 +759,12 @@ func serveFile(in string) error {
 	}
 
 	type renderResult struct {
-		svg    string
-		model  []isotopo.PartModel
-		issues []isotopo.Issue
+		svg          string
+		model        []isotopo.PartModel
+		routes       []isotopo.ConnectorRoute
+		screenLabels []isotopo.ScreenLabel
+		planLabels   []isotopo.PlanLabel
+		issues       []isotopo.Issue
 	}
 	render := func(lang string, data []byte, projection string) (renderResult, error) {
 		doc, err := loadDocument(lang, data)
@@ -774,7 +788,14 @@ func serveFile(in string) error {
 				return renderResult{issues: issues}, nil
 			}
 		}
-		svg := renderTopologySVG(doc)
+		if flagProjection != "" {
+			if doc.Canvas == nil {
+				doc.Canvas = &isotopo.Canvas{}
+			}
+			doc.Canvas.Projection = flagProjection
+		}
+		scene := isotopo.RenderSceneWithInteraction(doc)
+		svg := scene.SVG
 		if svg == "" {
 			issues = append(issues, isotopo.Issue{
 				Severity: isotopo.SeverityError, Path: "$",
@@ -782,11 +803,9 @@ func serveFile(in string) error {
 			})
 			return renderResult{issues: issues}, nil
 		}
-		// Build the interaction model (world-space AABBs + anchors) so Studio
-		// can do reparent hit-testing and anchor display without touching the SVG
-		// DOM. Only included when the document has a composite scene (iso/top).
-		model := isotopo.BuildInteractionModel(doc)
-		return renderResult{svg: svg, model: model, issues: issues}, nil
+		// Geometry and selection belong to the same submitted scene. Plan
+		// previews reuse the layout and content already certified for the SVG.
+		return renderResult{svg: svg, model: scene.Model, routes: scene.Routes, screenLabels: scene.ScreenLabels, planLabels: scene.PlanLabels, issues: issues}, nil
 	}
 
 	mux := http.NewServeMux()
@@ -822,7 +841,7 @@ func serveFile(in string) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"svg": res.svg, "issues": res.issues, "model": res.model})
+		json.NewEncoder(w).Encode(map[string]any{"svg": res.svg, "issues": res.issues, "model": res.model, "routes": res.routes, "screenLabels": res.screenLabels, "planLabels": res.planLabels})
 	})
 	// POST /api/save — the ONE write-back path. Studio edits live in the
 	// browser copy; this is the explicit "Overwrite" action that persists the
@@ -878,6 +897,28 @@ func serveFile(in string) error {
 			Kind: "move", Target: q.Get("kind"), ID: q.Get("id"), CI: ci,
 			DWX: atof(q.Get("dwx")), DWY: atof(q.Get("dwy")), Snap: atof(q.Get("snap")),
 		}
+		if q.Get("segment") != "" {
+			segment, err := strconv.Atoi(q.Get("segment"))
+			if err != nil {
+				http.Error(w, "invalid segment", 400)
+				return
+			}
+			if q.Get("kind") != "edge" || q.Get("ids") != "" || q.Get("wp") != "" {
+				http.Error(w, "segment editing requires one edge and no legacy waypoint override", 400)
+				return
+			}
+			if _, err := strconv.Atoi(q.Get("ci")); err != nil {
+				http.Error(w, "invalid connector index", 400)
+				return
+			}
+			for _, key := range []string{"dwx", "dwy"} {
+				if _, err := strconv.ParseFloat(q.Get(key), 64); err != nil {
+					http.Error(w, "invalid segment delta", 400)
+					return
+				}
+			}
+			op.Kind, op.Segment = "move-segment", segment
+		}
 		// v5 — Studio group move: ids=<JSON string array> applies the same
 		// delta to every listed node atomically (all-or-nothing, one text
 		// surgery, one round-trip). Absent → the single-id path is untouched.
@@ -904,7 +945,7 @@ func serveFile(in string) error {
 		}
 		res, _ := render(lang, out, r.URL.Query().Get("projection"))
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"yaml": string(out), "svg": res.svg, "issues": res.issues, "model": res.model})
+		json.NewEncoder(w).Encode(map[string]any{"yaml": string(out), "svg": res.svg, "issues": res.issues, "model": res.model, "routes": res.routes, "screenLabels": res.screenLabels, "planLabels": res.planLabels})
 	})
 	// v4.7 — detail editor. /api/fields returns the scalar fields actually
 	// present in a node/edge's YAML, each with a semantic label, for the
@@ -956,7 +997,7 @@ func serveFile(in string) error {
 		out := string(outB)
 		res, _ := render(lang, outB, r.URL.Query().Get("projection"))
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"yaml": out, "svg": res.svg, "issues": res.issues, "model": res.model})
+		json.NewEncoder(w).Encode(map[string]any{"yaml": out, "svg": res.svg, "issues": res.issues, "model": res.model, "routes": res.routes, "screenLabels": res.screenLabels, "planLabels": res.planLabels})
 	})
 	// v4.8 — structural ops: delete a node (+its connectors) or edge, or
 	// duplicate a node. Comment-preserving text surgery on the posted source.
@@ -999,7 +1040,7 @@ func serveFile(in string) error {
 		out := string(outB)
 		res, _ := render(lang, outB, r.URL.Query().Get("projection"))
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"yaml": out, "svg": res.svg, "issues": res.issues, "model": res.model})
+		json.NewEncoder(w).Encode(map[string]any{"yaml": out, "svg": res.svg, "issues": res.issues, "model": res.model, "routes": res.routes, "screenLabels": res.screenLabels, "planLabels": res.planLabels})
 	})
 	// The per-part gallery the footer links to. The render command writes
 	// these as files; serve answers them on the fly from the CURRENT file
@@ -1067,7 +1108,8 @@ func serveFile(in string) error {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		res, _ := render(sourceLang, data, ""); svg := res.svg
+		res, _ := render(sourceLang, data, "")
+		svg := res.svg
 		w.Header().Set("Content-Type", "image/svg+xml")
 		w.Write([]byte(svg))
 	})
@@ -1081,7 +1123,8 @@ func serveFile(in string) error {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		res, _ := render(sourceLang, data, ""); svg := res.svg
+		res, _ := render(sourceLang, data, "")
+		svg := res.svg
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		// Never let the browser serve a stale Studio page — the template
 		// changes between builds and a cached copy would run old JS (the

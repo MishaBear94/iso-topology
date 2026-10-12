@@ -18,8 +18,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-
-	"github.com/MarkovWangRR/iso-topology/iso25d"
 )
 
 const defaultCellSize = 40.0
@@ -50,6 +48,10 @@ func applyLayout(n *Node, canvas *Canvas) []Issue {
 	if n == nil || n.Shape != "composite" {
 		return nil
 	}
+	// Every layout calculation (including pins, relative placement and group
+	// fitting) sees effective local coordinates. Restore the separate grid
+	// representation on return so render/edit callers do not add it twice.
+	defer includeGridOffsets(n.Parts, n.GridStep)()
 	cell := layoutCell(n, canvas)
 	var issues []Issue
 	// v4.2 (M6) — connector-driven auto-layout at the root: the engine
@@ -462,35 +464,13 @@ func solveContainer(parts []*CompositePart, lay *Layout, owner *CompositePart, c
 }
 
 func partFootprint(p *CompositePart) (w, d float64) {
-	w, d = defaultPartW, defaultPartD
-	if isContainerShape(p.Shape) {
-		w, d = defaultGroupW, defaultGroupD
-	}
-	if p.Geom != nil {
-		if p.Geom.W > 0 {
-			w = p.Geom.W
-		}
-		if p.Geom.D > 0 {
-			d = p.Geom.D
-		}
-	}
-	// Reserve the size the renderer will actually DRAW: shapes with a floor
-	// (e.g. cloud) are clamped up at render, so the solver must clamp too or
-	// the shape overflows its slot / its auto-sized group.
-	mw, md, _ := iso25d.ShapeMinDims(p.Shape)
-	return math.Max(w, mw), math.Max(d, md)
+	w, d, _ = partDimensions(p)
+	return
 }
 
 func partHeight(p *CompositePart) float64 {
-	h := defaultPartH
-	if isContainerShape(p.Shape) {
-		h = defaultGroupSubstrateH
-	}
-	if p.Geom != nil && p.Geom.H > 0 {
-		h = p.Geom.H
-	}
-	_, _, mh := iso25d.ShapeMinDims(p.Shape)
-	return math.Max(h, mh)
+	_, _, h := partDimensions(p)
+	return h
 }
 
 // ── container arrangement (layout: row / column / grid) ─────────────
@@ -1113,11 +1093,7 @@ func layoutIssues(n *Node, canvas *Canvas) []Issue {
 	if n == nil || n.Shape != "composite" {
 		return nil
 	}
-	clone := &Node{Shape: n.Shape, GridStep: n.GridStep, Parts: cloneParts(n.Parts)}
-	if n.Layout != nil {
-		l := *n.Layout
-		clone.Layout = &l
-	}
+	clone := cloneSceneForEval(n)
 	return applyLayout(clone, canvas)
 }
 
@@ -1153,12 +1129,9 @@ func cloneParts(parts []*CompositePart) []*CompositePart {
 	return out
 }
 
-// ResolvePartOffset runs layout on the document's scene and returns the
-// world (wx, wy) the part with id resolves to — its auto/place-solved
-// position, or its explicit pin. The Studio drag endpoint adds the
-// drag delta to this to get a new absolute offset, so dragging a node
-// that has no coordinates yet (pure auto-layout) still works. Operates
-// on a clone so the caller's document is not mutated.
+// ResolvePartOffset returns the solved parent-relative Offset, excluding the
+// separately authored grid Position. Text edits can add a drag/duplicate delta
+// without baking the grid or parent's transform twice. Operates on a clone.
 func ResolvePartOffset(doc *Document, id string) (wx, wy, wz float64, ok bool) {
 	if doc == nil {
 		return 0, 0, 0, false
@@ -1167,7 +1140,7 @@ func ResolvePartOffset(doc *Document, id string) (wx, wy, wz float64, ok bool) {
 	if scene == nil {
 		return 0, 0, 0, false
 	}
-	applyLayout(scene, doc.Canvas)
+	scene = resolvedLayout(scene, doc.Canvas)
 	var found *CompositePart
 	var walk func(ps []*CompositePart)
 	walk = func(ps []*CompositePart) {
@@ -1205,7 +1178,7 @@ func ResolvePartGeom(doc *Document, id string) (w, d, h float64, ok bool) {
 	if scene == nil {
 		return 0, 0, 0, false
 	}
-	applyLayout(scene, doc.Canvas)
+	scene = resolvedLayout(scene, doc.Canvas)
 	var found *CompositePart
 	var walk func(ps []*CompositePart)
 	walk = func(ps []*CompositePart) {
@@ -1224,10 +1197,8 @@ func ResolvePartGeom(doc *Document, id string) (w, d, h float64, ok bool) {
 	if found == nil {
 		return 0, 0, 0, false
 	}
-	if found.Geom == nil {
-		return 0, 0, 0, true
-	}
-	return found.Geom.W, found.Geom.D, found.Geom.H, true
+	w, d, h = partDimensions(found)
+	return w, d, h, true
 }
 
 // ConnectorBend returns the current bend of the ci-th connector on the
@@ -1297,7 +1268,7 @@ func ResolveChildOffsets(doc *Document, groupID string) map[string][3]float64 {
 	if scene == nil {
 		return out
 	}
-	applyLayout(scene, doc.Canvas)
+	scene = resolvedLayout(scene, doc.Canvas)
 	var grp *CompositePart
 	var walk func(ps []*CompositePart)
 	walk = func(ps []*CompositePart) {
@@ -1370,7 +1341,7 @@ func ResolveAllOffsets(doc *Document) map[string][3]float64 {
 	if s == nil {
 		return out
 	}
-	applyLayout(s, doc.Canvas)
+	s = resolvedLayout(s, doc.Canvas)
 	for _, p := range s.Parts {
 		if p == nil || p.ID == "" {
 			continue

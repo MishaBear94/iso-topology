@@ -4,16 +4,18 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/MarkovWangRR/iso-topology/textmetrics"
 )
 
 // CompositePart describes one sub-element inside a composite node.
 type CompositePart struct {
-	ID     string // v2.9 — emitted as data-part-id for SVG↔source tooling
-	Shape  string
-	Opts   ConvertOpts
-	OffWX  float64
-	OffWY  float64
-	OffWZ  float64
+	ID    string // v2.9 — emitted as data-part-id for SVG↔source tooling
+	Shape string
+	Opts  ConvertOpts
+	OffWX float64
+	OffWY float64
+	OffWZ float64
 }
 
 // RenderComposite stacks N parts into one SVG. Each part is rendered
@@ -61,14 +63,15 @@ func RenderComposite(parts []CompositePart) string {
 	}
 
 	type rendered struct {
-		inner      string
-		sx, sy     float64 // screen projection of (OffWX, OffWY, OffWZ)
+		inner        string
+		sx, sy       float64 // screen projection of (OffWX, OffWY, OffWZ)
 		intTx, intTy float64 // standalone's internal centering offset
-		stdW, stdH float64 // standalone SVG width / height
+		stdW, stdH   float64 // standalone SVG width / height
 	}
 	rs := make([]rendered, 0, len(parts))
+	fonts := make(fontResources)
 	for _, p := range parts {
-		full := Convert2DTo25D(p.Shape, p.Opts)
+		full := convert2DTo25D(p.Shape, p.Opts, fonts)
 		inner, stdW, stdH := stripOuterSVG(full)
 		sx := p.OffWX*cos30 - p.OffWY*cos30
 		sy := p.OffWX*sin30 + p.OffWY*sin30 - p.OffWZ
@@ -84,7 +87,8 @@ func RenderComposite(parts []CompositePart) string {
 	// shared ProjectedBounds, so the overlay layers' (tx,ty) can't drift.
 	boxes := make([][6]float64, len(parts))
 	for i, p := range parts {
-		boxes[i] = [6]float64{p.OffWX, p.OffWY, p.OffWZ, p.Opts.Width, p.Opts.Depth, p.Opts.Height}
+		w, d, h := ShapeDimensions(p.Shape, p.Opts)
+		boxes[i] = [6]float64{p.OffWX, p.OffWY, p.OffWZ, w, d, h}
 	}
 	minX, minY, maxX, maxY := ProjectedBounds(boxes)
 	pad := 12.0
@@ -130,15 +134,14 @@ func RenderComposite(parts []CompositePart) string {
 
 	var sb strings.Builder
 	// data-scene-tx / data-scene-ty: SVG user coordinates of world (0,0,0).
-	// Studio's containerUnder reads these to project screen → world. ROUNDED to
-	// integers so the attribute is deterministic across CPUs — a fractional
-	// value here lands on a %.4f rounding boundary that the Go compiler's
-	// multiply-add fusion flips on arm64 vs amd64, which made every connector
-	// golden machine-dependent. The sub-pixel rounding is invisible to Studio's
-	// drag math. (Content placement still uses the precise tx/ty below.)
+	// Keep the same cent precision as part transforms; integer rounding caused
+	// up to half a pixel of model/hit-region drift. Canonicalise at a micro-unit
+	// before rounding to cents so multiply-add noise cannot flip a half-cent
+	// boundary between CPUs. Metadata never changes the actual painted origin.
+	frameCoord := func(v float64) float64 { return math.Round(math.Round(v*1e6)/1e4) / 100 }
 	fmt.Fprintf(&sb,
 		`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="%.2f %.2f %.2f %.2f" width="%.2f" height="%.2f" data-scene-tx="%.4f" data-scene-ty="%.4f">`,
-		vx, vy, W, H, W, H, math.Round(tx), math.Round(ty),
+		vx, vy, W, H, W, H, frameCoord(tx), frameCoord(ty),
 	)
 	for i, r := range rs {
 		// Outer translate places the part's WORLD (offWX, offWY, offWZ)
@@ -155,7 +158,7 @@ func RenderComposite(parts []CompositePart) string {
 		)
 	}
 	sb.WriteString(`</svg>`)
-	return sb.String()
+	return textmetrics.DeduplicateFonts(sb.String())
 }
 
 // namespaceSVGIDs prefixes every id definition and reference inside one
@@ -254,7 +257,8 @@ func tagCloseIndex(s string, lt int) int {
 // project(OffWX, OffWY, OffWZ), making world-projected coords usable
 // directly across all shape types.
 func PartOriginOffset(shape string, opts ConvertOpts) (tx, ty float64) {
-	w, d, h := opts.Width, opts.Depth, opts.Height
+	shape = strings.ToLower(strings.TrimSpace(shape))
+	w, d, h := ShapeDimensions(shape, opts)
 	m := opts.Margin
 	if m <= 0 {
 		m = 24 // matches Default* renderers in shapes.go
@@ -265,13 +269,12 @@ func PartOriginOffset(shape string, opts ConvertOpts) (tx, ty float64) {
 		// baseline-start (local origin of the iso matrix), which sits at
 		// (m, m + sin30·fontSize) inside the standalone. Use the SAME m
 		// that RenderIsoText sees post applyBox / DefaultIsoBox (24).
-		fontSize := opts.FontSize
-		if fontSize <= 0 {
-			fontSize = 16
-		}
+		b := DefaultIsoBox()
+		applyBox(opts, &b)
+		fontSize := b.FontSize
 		return m, m + sin30*fontSize
 
-	case "cylinder", "stored_data", "queue", "oval":
+	case "cylinder", "stored_data", "queue":
 		rx := w / 2
 		// ry encodes the iso-tilt of the ellipse depth (rx * tan30).
 		ry := rx * sin30 / cos30
@@ -282,38 +285,33 @@ func PartOriginOffset(shape string, opts ConvertOpts) (tx, ty float64) {
 		dy := -(w/2+d/2)*sin30 + h
 		return rx + m + dx, ry + m + dy
 
-	case "person", "c4-person":
-		// Person body is a cylinder + sphere head; standalone frame puts
-		// the BODY TOP-ELLIPSE centre at local (0, 0). World (0, 0, 0) (=
-		// body bbox back-bottom-left corner) projects to local (0, h −
-		// w/2) when w == d. ty also has to clear the head's vertical
-		// extent so the SVG canvas fully holds the figure.
-		rx := w / 2
-		ry := rx * sin30 / cos30
-		headR := w * 0.27 // matches applyPerson
-		headGap := 4.0
-		dx := (-w/2 + d/2) * cos30
-		return rx + m + dx, ry + headGap + 2*headR + m + h - rx
+	case "person":
+		p := DefaultIsoPerson()
+		applyPerson(opts, &p)
+		return personOrigin(p)
 	case "circle":
-		// Sphere is a flat disc centred at (r+m, r+m). World (0,0,0) and
+		// The flat disc's frame may grow around a bound caption. World (0,0,0) and
 		// world centre (r,r,r) project to the SAME screen point (iso
 		// projection degeneracy along the camera axis), so the offset is
 		// the same as the disc centre.
-		r := math.Min(math.Min(w, d), h) / 2
-		return r + m, r + m
+		s := DefaultIsoSphere()
+		applySphere(opts, &s)
+		cx, cy, _, _ := sphereFrame(s)
+		return cx, cy
 	case "cloud":
-		// Outline-based; minX of the projected outline is at the trunk's
-		// bottom-left corner (leftX, bottomY). leftX = 0.04w, bottomY =
-		// 0.85d match sampleCloudOutline. minY is at the SMALLEST bump
-		// peak (bump 2 by default, at local (0.5w, 0.06d)) on the top
-		// face (z = h), where the projected y bottoms out.
-		leftX := 0.04 * w
-		bottomY := 0.85 * d
-		minX := (leftX - bottomY) * cos30
-		peakX := 0.5 * w
-		peakY := 0.06 * d
-		minY := (peakX+peakY)*sin30 - h
+		ox, oy := outlineOrigin(sampleCloudOutline(w, d), h, m)
+		b := DefaultIsoBox()
+		applyBox(opts, &b)
+		b.Width, b.Depth, b.Height = w, d, h
+		minX, minY, _, _ := cloudContentBounds(b, -ox+m, -oy+m, 0, 0)
 		return -minX + m, -minY + m
+	case "wedge", "custom_path", "triprism", "hexprism", "octprism", "array1d", "array2d", "array3d", "rack":
+		// These renderers use the box frame even when the outline does not
+		// reach its corners; cornerRadius does not select the rounded path.
+		return d*cos30 + m, h + m
+	}
+	if opts.CornerRadius > 0 {
+		return outlineOrigin(sampleRoundedRectCW(w, d, roundedRadius(w, d, opts.CornerRadius)), h, m)
 	}
 	// Default = box-style extrude (rectangle, document, page, callout,
 	// class, sql_table, hexagon, polygon, step, diamond, text, code,

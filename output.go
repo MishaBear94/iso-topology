@@ -89,10 +89,13 @@ var studioCSS string
 //go:embed studio/studio.js
 var studioJS string
 
+//go:embed studio/selection.js
+var studioSelectionJS string
+
 func TopologyHTML(svg, sourceText, sourceLang, sourceFilename string) string {
 	// Assemble the Studio page from three embedded assets (studio/*.{html,css,js}):
 	// first inline the CSS/JS into the shell, then fill in the per-render data.
-	page := strings.NewReplacer("{{CSS}}", studioCSS, "{{JS}}", studioJS).Replace(studioShell)
+	page := strings.NewReplacer("{{CSS}}", studioCSS, "{{JS}}", studioSelectionJS+"\n"+studioJS).Replace(studioShell)
 	base := filepath.Base(sourceFilename)
 	return strings.NewReplacer(
 		"{{LANG}}", html.EscapeString(sourceLang),

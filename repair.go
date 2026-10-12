@@ -126,6 +126,9 @@ func RepairScene(doc *Document) (*Document, int) {
 			if repairRouting(doc, scene) {
 				changed = true
 			}
+			if repairIsoRouteCrowding(doc, scene) {
+				changed = true
+			}
 		}
 		if !changed {
 			break // converged (or nothing left we can fix)

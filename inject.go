@@ -147,6 +147,15 @@ func injectCanvasBackground(svg string, c *Canvas) string {
 // horizontally on the part's projected (top-face centre) and slightly
 // below the iso shape's projected bounding box.
 func injectScreenLabels(svg string, infos []partInfo, extraObstacles []screenRect) (string, []screenRect) {
+	return injectScreenLabelsWithInfo(svg, infos, extraObstacles, nil)
+}
+
+func injectScreenLabelsWithInfo(svg string, infos []partInfo, extraObstacles []screenRect, labels *[]ScreenLabel) (string, []screenRect) {
+	return injectScreenLabelsProtected(svg, infos, extraObstacles, labels, screenLabelProtection{})
+}
+
+func injectScreenLabelsProtected(svg string, infos []partInfo, extraObstacles []screenRect, labels *[]ScreenLabel, protection screenLabelProtection) (string, []screenRect) {
+	var observed []ScreenLabel
 	project := projectIso
 	any := false
 	for _, p := range infos {
@@ -167,11 +176,7 @@ func injectScreenLabels(svg string, infos []partInfo, extraObstacles []screenRec
 	obstacles := append(append([]screenRect(nil), partRects...), extraObstacles...)
 	var placed []screenRect
 
-	var sb strings.Builder
-	sb.WriteString(`<g data-layer="screen-labels">`)
-	maxLabelY := 0.0
-	maxLabelX := 0.0
-	minLabelX, minLabelY := math.Inf(1), math.Inf(1)
+	var placements []screenLabelPlacement
 	for i, p := range infos {
 		if p.screenLabel == "" {
 			continue
@@ -191,27 +196,49 @@ func injectScreenLabels(svg string, infos []partInfo, extraObstacles []screenRec
 			weight = "600"
 		}
 		fontSize := p.labelFontSize
-		// Surgical CJK fix: wide runes advance one em (BYTE counting
-		// inflated CJK labels ~3× — each ideograph is 3 bytes in
-		// UTF-8), while narrow runes keep the legacy per-byte advance
-		// so every frozen non-CJK golden (incl. em-dash / middle-dot
-		// labels) stays byte-identical.
-		boxW := textmetrics.TextPxWideBytes(text, fontSize, textmetrics.NarrowScreenLabel) + 16
-		boxH := fontSize + 10
+		block := layoutScreenText(text, family, weight, fontSize)
+		boxW, boxH := block.width, block.height
+		if block.font != nil {
+			family, weight, fontSize = "Source Sans Pro", block.font.Weight(), block.size
+		}
 
-		// Own silhouette doesn't block the label hanging off its edge —
-		// every OTHER part and already-placed label does.
+		// Bound-font chips reserve their full measured area, including clearance
+		// from their own projected body. Legacy estimates retain the existing
+		// hanging-caption policy for the owning part.
 		others := make([]screenRect, 0, len(obstacles))
 		for j, o := range obstacles {
-			if j == i {
+			if j == i && block.font == nil {
 				continue
 			}
 			others = append(others, o)
 		}
 		bx, by := placeTextBox(boxW, boxH, partRects[i], cx-boxW/2, baseY, sceneCx, sceneCy, others)
-		cx, baseY = bx+boxW/2, by
-		placed = append(placed, screenRect{bx, by, bx + boxW, by + boxH})
+		placements = append(placements, screenLabelPlacement{index: i, block: block, family: family, weight: weight, x: bx, y: by, preferred: bx == cx-boxW/2 && by == baseY})
 		obstacles = append(obstacles, screenRect{bx, by, bx + boxW, by + boxH})
+	}
+	compactScreenLabels(placements, partRects, obstacles[:len(partRects)+len(extraObstacles)], protection)
+	var sb strings.Builder
+	sb.WriteString(`<g data-layer="screen-labels">`)
+	boundFonts := map[string]bool{}
+	for _, f := range textmetrics.FontsInSVG(svg) {
+		boundFonts[f.Hash()] = true
+	}
+	maxLabelY, maxLabelX := 0.0, 0.0
+	minLabelX, minLabelY := math.Inf(1), math.Inf(1)
+	for _, placement := range placements {
+		i, block := placement.index, placement.block
+		p := infos[i]
+		text, family, weight := p.screenLabel, placement.family, placement.weight
+		boxW, boxH, fontSize := block.width, block.height, block.size
+		cx, baseY := placement.x+boxW/2, placement.y
+		if block.font != nil && !boundFonts[block.font.Hash()] {
+			sb.WriteString(block.font.CSS())
+			boundFonts[block.font.Hash()] = true
+		}
+		if labels != nil {
+			observed = append(observed, observeScreenLabel(i, p, block, cx, baseY, family, weight))
+		}
+		placed = append(placed, screenRect{placement.x, placement.y, placement.x + boxW, placement.y + boxH})
 		bg := p.labelBg
 		if bg == "" {
 			bg = "transparent"
@@ -248,10 +275,19 @@ func injectScreenLabels(svg string, infos []partInfo, extraObstacles []screenRec
 				cx-boxW/2, baseY, boxW, boxH, bg, strokeAttr,
 			)
 		}
-		fmt.Fprintf(&sb,
-			`<text x="%.2f" y="%.2f" dy=".35em" font-family="%s" font-size="%.1f" font-weight="%s" fill="%s" text-anchor="middle">%s</text>`,
-			cx, baseY+boxH/2, escAttr(family), fontSize, escAttr(weight), color, escapeXML(text),
-		)
+		if block.font != nil {
+			for _, line := range block.lines {
+				fmt.Fprintf(&sb,
+					`<text x="%.2f" y="%.2f" font-family="%s" font-size="%.2f" font-weight="%s" fill="%s" text-anchor="middle" xml:space="preserve" xml:lang="en" lang="en" style="white-space:pre;font-kerning:normal;font-variant-ligatures:normal">%s</text>`,
+					cx, baseY+line.baseline, escAttr(family), fontSize, escAttr(weight), color, escapeXML(line.text),
+				)
+			}
+		} else {
+			fmt.Fprintf(&sb,
+				`<text x="%.2f" y="%.2f" dy=".35em" font-family="%s" font-size="%.1f" font-weight="%s" fill="%s" text-anchor="middle">%s</text>`,
+				cx, baseY+boxH/2, escAttr(family), fontSize, escAttr(weight), color, escapeXML(text),
+			)
+		}
 		sb.WriteString(`</g>`)
 		if labelBottom := baseY + boxH; labelBottom > maxLabelY {
 			maxLabelY = labelBottom
@@ -275,6 +311,9 @@ func injectScreenLabels(svg string, infos []partInfo, extraObstacles []screenRec
 			minX: minLabelX - pad, minY: minLabelY - pad,
 			maxX: maxLabelX + pad, maxY: maxLabelY + pad,
 		})
+	}
+	if labels != nil {
+		*labels = append(*labels, observed...)
 	}
 	return out, placed
 }
@@ -349,14 +388,16 @@ func collectDescendantObstacles(parts []*CompositePart, baseX, baseY, baseZ floa
 // single output byte (straight edges, by contract, still emit NO data-route).
 // depthSort is the WS-A canvas.depthSort flag: routes are layered by endpoint
 // depth instead of pinned under all bodies.
-func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo, sceneParts []*CompositePart, nSubstrates int, rc *routeCollector, depthSort bool) (string, []screenRect) {
+func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo, sceneParts []*CompositePart, nSubstrates int, rc *routeCollector, depthSort bool, protection *screenLabelProtection, bodySources ...connectorTextBodySource) (string, []screenRect) {
 	project := projectIso
 	tx, ty := partsScreenOrigin(infos)
 
 	byID := map[string]partInfo{}
-	for _, p := range infos {
+	paintIndexes := map[string]int{}
+	for i, p := range infos {
 		if p.id != "" {
 			byID[p.id] = p
+			paintIndexes[p.id] = i
 		}
 	}
 
@@ -490,8 +531,12 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		}
 		isCollinearConn[i] = collinear
 		if !collinear {
-			srcSideCount[ar.sideKey(effFrom[i])]++
-			tgtSideCount[ar.sideKey(effTo[i])]++
+			if !isFixedPortRef(effFrom[i]) {
+				srcSideCount[ar.sideKey(effFrom[i])]++
+			}
+			if !isFixedPortRef(effTo[i]) {
+				tgtSideCount[ar.sideKey(effTo[i])]++
+			}
 		}
 	}
 	srcSideIdx := map[string]int{}
@@ -509,6 +554,11 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		cMinY = math.Min(cMinY, y)
 		cMaxX = math.Max(cMaxX, x)
 		cMaxY = math.Max(cMaxY, y)
+	}
+	ink := minSvgRect{math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)}
+	trackInk := func(b minSvgRect) {
+		ink.minX, ink.minY = math.Min(ink.minX, b.minX), math.Min(ink.minY, b.minY)
+		ink.maxX, ink.maxY = math.Max(ink.maxX, b.maxX), math.Max(ink.maxY, b.maxY)
 	}
 
 	var sb strings.Builder
@@ -532,6 +582,23 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 	}
 	var segRects []screenRect
 	var placedPills []screenRect
+	var measuredLabels []connectorTextRequest
+	var measuredRecords []ConnectorLabelRecord
+	var labelObstacles []connectorTextObstacle
+	var labelStrokes []connectorTextStroke
+	var labelTargets []connectorTextRectTarget
+	collectLabelConflicts := rc != nil && !rc.preClipOnly && rc.labelConflicts
+	measureLabels := false
+	for _, c := range conns {
+		measureLabels = measureLabels || c.LabelFontFamily != ""
+	}
+	if measureLabels && collectLabelConflicts {
+		for i, p := range infos {
+			if !p.isSubstrate {
+				labelTargets = append(labelTargets, connectorTextBodyTarget(p.id, i, allRects[i]))
+			}
+		}
+	}
 	var drawnLines []drawnLine
 	// v2 router — world polylines of connectors already routed this pass, so
 	// each orthogonal2 route can price crossings against them (the +100
@@ -567,6 +634,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		// keeping them separate from routeWorld/routeScreen guarantees route
 		// collection can't leak a new attribute into the SVG.
 		var collWorld, collScreen [][2]float64
+		var world3D [][3]float64
 		switch c.Routing {
 		case "orthogonal", "orthogonal2":
 			// Anchor-aware L/Z in the iso world ground plane.
@@ -631,10 +699,14 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				tgtKey := ar.sideKey(effTo[ci])
 				sN, sIdx := srcSideCount[srcKey], srcSideIdx[srcKey]
 				tN, tIdx := tgtSideCount[tgtKey], tgtSideIdx[tgtKey]
-				srcSideIdx[srcKey]++
-				tgtSideIdx[tgtKey]++
-				sStagger = (float64(sIdx) - float64(sN-1)/2) * sChannelW
-				tStagger = (float64(tIdx) - float64(tN-1)/2) * tChannelW
+				if !isFixedPortRef(effFrom[ci]) {
+					srcSideIdx[srcKey]++
+					sStagger = (float64(sIdx) - float64(sN-1)/2) * sChannelW
+				}
+				if !isFixedPortRef(effTo[ci]) {
+					tgtSideIdx[tgtKey]++
+					tStagger = (float64(tIdx) - float64(tN-1)/2) * tChannelW
+				}
 			}
 			sTanX, sTanY := -sdy, sdx
 			tTanX, tTanY := -tdy, tdx
@@ -672,7 +744,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			// route; nil (degenerate anchors, oversized grid, unreachable)
 			// falls back to the v1 elbow route below.
 			var v2Pts [][2]float64
-			if c.Routing == "orthogonal2" && c.Bend == nil && len(c.Waypoints) == 0 {
+			if c.Routing == "orthogonal2" && c.Bend == nil && len(c.Waypoints) == 0 && len(c.Waypoints3D) == 0 {
 				fromID2, _ := ar.parse(effFrom[ci])
 				toID2, _ := ar.parse(effTo[ci])
 				v2Pts = route(
@@ -739,7 +811,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			}
 			appendRiserTgt := func(pts [][3]float64) [][3]float64 {
 				if tgtZ > routeZ {
-					pts = append(pts, [3]float64{tStubX, tStubY, routeZ})
+					pts = append(pts, [3]float64{tStubX, tStubY, tgtZ})
 				}
 				return pts
 			}
@@ -843,6 +915,14 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				np = append(np, [3]float64{tWX, tWY, tgtZ})
 				worldPts = orthoThread(np)
 			}
+			if len(c.Waypoints3D) > 0 {
+				np := [][3]float64{{sWX, sWY, srcZ}}
+				for _, wp := range c.Waypoints3D {
+					np = append(np, [3]float64{wp.WX, wp.WY, wp.WZ})
+				}
+				np = append(np, [3]float64{tWX, tWY, tgtZ})
+				worldPts = orthogonalThread3D(np)
+			}
 			// v1.6 — if every waypoint shares the same world x OR the same
 			// world y, the L-shape has degenerated to a single iso-axis line.
 			// Emit just (source, target) so the path doesn't render multiple
@@ -862,7 +942,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 					allSameZ = false
 				}
 			}
-			if (allSameX || allSameY) && allSameZ {
+			if len(c.Waypoints3D) == 0 && (allSameX || allSameY) && allSameZ {
 				x1, y1 := project(worldPts[0][0], worldPts[0][1], worldPts[0][2])
 				last := worldPts[len(worldPts)-1]
 				x2, y2 := project(last[0], last[1], last[2])
@@ -870,17 +950,23 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				pts = append(pts, [2]float64{x2 + tx, y2 + ty})
 				routeWorld = [][2]float64{{worldPts[0][0], worldPts[0][1]}, {last[0], last[1]}}
 				routeScreen = [][2]float64{{x1 + tx, y1 + ty}, {x2 + tx, y2 + ty}}
+				if rc != nil {
+					world3D = [][3]float64{worldPts[0], last}
+				}
 				break
 			}
 			// v3.1 despike: stub-driven waypoints can walk an axis one way
 			// and immediately back (hub→diagonal-neighbour cases), which
 			// renders as a doubled line / hook. Collapse any waypoint whose
 			// outgoing segment reverses its incoming segment's direction.
-			for changed := true; changed; {
+			for changed := len(c.Waypoints3D) == 0; changed; {
 				changed = false
 				for i := 1; i < len(worldPts)-1; i++ {
 					inX, inY := worldPts[i][0]-worldPts[i-1][0], worldPts[i][1]-worldPts[i-1][1]
 					outX, outY := worldPts[i+1][0]-worldPts[i][0], worldPts[i+1][1]-worldPts[i][1]
+					if math.Abs(worldPts[i][2]-worldPts[i-1][2]) > eps || math.Abs(worldPts[i+1][2]-worldPts[i][2]) > eps {
+						continue // a vertical riser must not be collapsed by its XY shadow
+					}
 					if (inX*outX < 0 && math.Abs(inY)+math.Abs(outY) < eps) ||
 						(inY*outY < 0 && math.Abs(inX)+math.Abs(outX) < eps) {
 						worldPts = append(worldPts[:i], worldPts[i+1:]...)
@@ -902,6 +988,9 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				pts = append(pts, [2]float64{sx, sy})
 				routeWorld = append(routeWorld, [2]float64{p[0], p[1]})
 				routeScreen = append(routeScreen, [2]float64{sx, sy})
+				if rc != nil {
+					world3D = append(world3D, p)
+				}
 			}
 		case "bezier":
 			// v2.1 — single quadratic curve from c.From to c.To, control
@@ -929,6 +1018,10 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				_, _, srcZ, _ := ar.world(c.From)
 				_, _, tgtZ, _ := ar.world(c.To)
 				collScreen, collWorld = sampleBezierRoute(pts, srcZ, tgtZ, tx, ty)
+				for i, p := range collWorld {
+					t := float64(i) / float64(len(collWorld)-1)
+					world3D = append(world3D, [3]float64{p[0], p[1], srcZ + t*(tgtZ-srcZ)})
+				}
 			}
 		default: // "straight" or empty
 			x1, y1, ok1 := ar.screen(c.From)
@@ -940,10 +1033,11 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			// WS-E collection: the drawn line IS the segment between the two
 			// world anchors (linear projection), so record those (pre-clip).
 			if rc != nil {
-				sWX, sWY, _, _ := ar.world(c.From)
-				tWX, tWY, _, _ := ar.world(c.To)
+				sWX, sWY, sZ, _ := ar.world(c.From)
+				tWX, tWY, tZ, _ := ar.world(c.To)
 				collWorld = [][2]float64{{sWX, sWY}, {tWX, tWY}}
 				collScreen = [][2]float64{{x1, y1}, {x2, y2}}
+				world3D = [][3]float64{{sWX, sWY, sZ}, {tWX, tWY, tZ}}
 			}
 		}
 
@@ -955,6 +1049,12 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			placedRoutes = append(placedRoutes, routeWorld)
 		}
 
+		curved := c.Routing == "bezier" && len(pts) == 3
+		var pathTrace *connectorPathTrace
+		if rc != nil && !rc.preClipOnly {
+			pathTrace = newConnectorPathTrace(pts, world3D, curved, [2]float64{tx, ty})
+		}
+
 		// v3.2.2 — terminal despike: drop a sub-7px final segment that
 		// doubles back against its predecessor (stub overshoot at the
 		// clipped boundary renders as a V-kink under the arrowhead).
@@ -964,6 +1064,7 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				lx, ly := p[n-1][0]-p[n-2][0], p[n-1][1]-p[n-2][1]
 				px, py := p[n-2][0]-p[n-3][0], p[n-2][1]-p[n-3][1]
 				if math.Hypot(lx, ly) < 7 && lx*px+ly*py < 0 {
+					pathTrace.shortcutTail()
 					p = append(p[:n-2], p[n-1])
 					continue
 				}
@@ -971,14 +1072,18 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			}
 			return p
 		}
-		pts = trimTail(pts)
-		// mirror for the start side
-		for i, j := 0, len(pts)-1; i < j; i, j = i+1, j-1 {
-			pts[i], pts[j] = pts[j], pts[i]
-		}
-		pts = trimTail(pts)
-		for i, j := 0, len(pts)-1; i < j; i, j = i+1, j-1 {
-			pts[i], pts[j] = pts[j], pts[i]
+		if !curved && len(c.Waypoints3D) == 0 {
+			pts = trimTail(pts)
+			// mirror for the start side
+			pathTrace.reverse()
+			for i, j := 0, len(pts)-1; i < j; i, j = i+1, j-1 {
+				pts[i], pts[j] = pts[j], pts[i]
+			}
+			pts = trimTail(pts)
+			pathTrace.reverse()
+			for i, j := 0, len(pts)-1; i < j; i, j = i+1, j-1 {
+				pts[i], pts[j] = pts[j], pts[i]
+			}
 		}
 
 		// v3.0 — endpoint silhouette clipping: when an anchor face is
@@ -995,11 +1100,22 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			// boundary and is occluded where it passes behind a body — that
 			// occlusion IS the 2.5D depth cue. Both ends clip (substrates too)
 			// so a line never invades a face.
-			if tp, ok := byID[toID]; ok {
-				pts = clipRouteEnd(pts, partSilhouette(tp, tx, ty), 2)
-			}
-			if sp, ok := byID[fromID]; ok {
-				pts = clipRouteStart(pts, partSilhouette(sp, tx, ty), 1)
+			if curved {
+				var source, target screenRegion
+				if p, ok := byID[fromID]; ok && !isFixedPortRef(c.From) {
+					source = partBodyRegion(p, tx, ty)
+				}
+				if p, ok := byID[toID]; ok && !isFixedPortRef(c.To) {
+					target = partBodyRegion(p, tx, ty)
+				}
+				pts = clipQuadraticRegionsTracked(pts, source, target, 1, 2, pathTrace)
+			} else {
+				if tp, ok := byID[toID]; ok && !isFixedPortRef(c.To) {
+					pts = clipRouteEndRegionTracked(pts, partBodyRegion(tp, tx, ty), 2, pathTrace)
+				}
+				if sp, ok := byID[fromID]; ok && !isFixedPortRef(c.From) {
+					pts = clipRouteStartRegionTracked(pts, partBodyRegion(sp, tx, ty), 1, pathTrace)
+				}
 			}
 		}
 		if len(pts) < 2 {
@@ -1012,12 +1128,26 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		// a few px apart (which reads as one fat line). Path elements stay
 		// separate, so data-connector / Studio hit-testing is unaffected.
 		styleKey := stroke + "|" + fmt.Sprintf("%.2f", width) + "|" + dash
+		coincidenceTolerance := 4.0
+		if curved {
+			// A control triple must never be reused as a three-point polyline,
+			// nor snapped off its curve to a merely nearby control triple.
+			styleKey += "|quadratic"
+			coincidenceTolerance = 1e-6
+		}
+		if isFixedPortRef(c.From) || isFixedPortRef(c.To) {
+			// Never let a later legacy edge adopt this fixed path under its
+			// looser coincidence tolerance (or the reverse).
+			styleKey += "|fixed-port"
+			coincidenceTolerance = 1e-6
+		}
 		if c.Stroke != nil && c.Stroke.Gradient != nil {
 			styleKey += "|grad:" + c.Stroke.Gradient.From + ">" + c.Stroke.Gradient.To
 		}
 		matched := false
 		for _, dl := range drawnLines {
-			if dl.key == styleKey && coincidentFwd(pts, dl.pts, 4.0) {
+			if dl.key == styleKey && coincidentFwd(pts, dl.pts, coincidenceTolerance) {
+				pathTrace.reuse(pts, dl.pts)
 				pts = dl.pts
 				matched = true
 				break
@@ -1027,7 +1157,17 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			drawnLines = append(drawnLines, drawnLine{styleKey, pts})
 		}
 
-		for _, p := range pts {
+		// Labels and occupied rectangles follow the actual visible curve;
+		// its off-curve control point is only for Q emission and the tangent.
+		visibleRoute := pts
+		if curved {
+			samples := (quadratic{pts[0], pts[1], pts[2]}).samples(.1)
+			visibleRoute = make([][2]float64, len(samples))
+			for i, sample := range samples {
+				visibleRoute[i] = sample.p
+			}
+		}
+		for _, p := range visibleRoute {
 			trackPt(p[0], p[1])
 		}
 
@@ -1075,6 +1215,24 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		// that means the very corners serialized as data-route — the legacy
 		// regex evaluator's coverage — while straight/bezier edges add the
 		// geometry the regex path never saw.
+		var collected *ConnectorRoute
+		submittedPoints := svgPoints(pts)
+		trackInk(connectorStrokeBounds(submittedPoints, curved, svgCoord(width)))
+		if measureLabels {
+			labelStrokes = append(labelStrokes, connectorTextStrokes(ci, submittedPoints, curved, svgCoord(width))...)
+			labelObstacles = append(labelObstacles, connectorTextStrokeObstacles(ci, submittedPoints, curved, svgCoord(width))...)
+		}
+		if protection != nil {
+			if curved {
+				b := connectorStrokeBounds(submittedPoints, true, svgCoord(width))
+				protection.rects = append(protection.rects, screenRect{b.minX, b.minY, b.maxX, b.maxY})
+			} else {
+				for j := 1; j < len(submittedPoints); j++ {
+					b := connectorStrokeBounds(submittedPoints[j-1:j+1], false, svgCoord(width))
+					protection.rects = append(protection.rects, screenRect{b.minX, b.minY, b.maxX, b.maxY})
+				}
+			}
+		}
 		if rc != nil {
 			switch c.Routing {
 			case "orthogonal", "orthogonal2":
@@ -1082,11 +1240,32 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 				// the straight default made the evaluator score the plan router's
 				// (crossing-avoiding) fallback instead of the drawn route, so a
 				// repair could "clear" a crossing that was still on screen.
-				rc.add(ci, fromID, toID, c.Routing, routeWorld, routeScreen)
+				collected = rc.add(ci, fromID, toID, c.Routing, routeWorld, routeScreen)
 			case "bezier":
-				rc.add(ci, fromID, toID, "bezier", collWorld, collScreen)
+				collected = rc.add(ci, fromID, toID, "bezier", collWorld, collScreen)
 			default:
-				rc.add(ci, fromID, toID, "straight", collWorld, collScreen)
+				collected = rc.add(ci, fromID, toID, "straight", collWorld, collScreen)
+			}
+			if collected != nil && !rc.preClipOnly {
+				kind := "polyline"
+				if curved {
+					kind = "quadratic"
+				}
+				resolvedSource, resolvedTarget := c.From, c.To
+				if c.Routing == "orthogonal" || c.Routing == "orthogonal2" {
+					resolvedSource, resolvedTarget = effFrom[ci], effTo[ci]
+				}
+				collected.World3D = world3D
+				collected.Drawing = &ConnectorDrawing{
+					Kind: kind, Points: submittedPoints, SourceRef: c.From, TargetRef: c.To,
+					ResolvedSource: resolvedSource, ResolvedTarget: resolvedTarget,
+					ProjectionOrigin: [2]float64{tx, ty}, StrokeWidth: svgCoord(width),
+					PaintBeforePart: connectorPaintLayer(effFrom[ci], effTo[ci], paintIndexes, nSubstrates, depthSort),
+				}
+				collected.Drawing.Coverage = observeConnectorCoverage(collected.Drawing, rc.paint)
+				collected.Drawing.Provenance = pathTrace.finish(collected.Drawing)
+				collected.Drawing.Attachments = connectorAttachments(ar, collected.Drawing)
+				collected.Drawing.Editable = connectorEditSpans(collected)
 			}
 		}
 		// Connector gradient: a userSpaceOnUse linear gradient laid along the
@@ -1114,11 +1293,11 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 		)
 
 		// Record inflated segment rects (route obstacles for later layers).
-		for i := 1; i < len(pts); i++ {
+		for i := 1; i < len(visibleRoute); i++ {
 			inf := width/2 + 3
 			segRects = append(segRects, screenRect{
-				math.Min(pts[i-1][0], pts[i][0]) - inf, math.Min(pts[i-1][1], pts[i][1]) - inf,
-				math.Max(pts[i-1][0], pts[i][0]) + inf, math.Max(pts[i-1][1], pts[i][1]) + inf,
+				math.Min(visibleRoute[i-1][0], visibleRoute[i][0]) - inf, math.Min(visibleRoute[i-1][1], visibleRoute[i][1]) - inf,
+				math.Max(visibleRoute[i-1][0], visibleRoute[i][0]) + inf, math.Max(visibleRoute[i-1][1], visibleRoute[i][1]) + inf,
 			})
 		}
 
@@ -1134,16 +1313,53 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 			b1y := tipY - size*math.Sin(theta) + size*0.5*math.Cos(theta)
 			b2x := tipX - size*math.Cos(theta) + size*0.5*math.Sin(theta)
 			b2y := tipY - size*math.Sin(theta) - size*0.5*math.Cos(theta)
-			fmt.Fprintf(&overlay,
+			arrowPoints := svgPoints([][2]float64{{tipX, tipY}, {b1x, b1y}, {b2x, b2y}})
+			arrowBounds := screenRect{math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)}
+			for _, p := range arrowPoints {
+				trackInk(minSvgRect{p[0] - 1, p[1] - 1, p[0] + 1, p[1] + 1})
+				arrowBounds.x0, arrowBounds.y0 = math.Min(arrowBounds.x0, p[0]), math.Min(arrowBounds.y0, p[1])
+				arrowBounds.x1, arrowBounds.y1 = math.Max(arrowBounds.x1, p[0]), math.Max(arrowBounds.y1, p[1])
+			}
+			if measureLabels {
+				labelObstacles = append(labelObstacles, connectorTextObstacle{-1, arrowBounds})
+				if collectLabelConflicts {
+					labelTargets = append(labelTargets, connectorTextRectTarget{kind: "arrow", index: ci, rect: arrowBounds})
+				}
+			}
+			if protection != nil {
+				protection.rects = append(protection.rects, arrowBounds)
+			}
+			if collected != nil && !rc.preClipOnly {
+				collected.Drawing.Arrow = arrowPoints
+			}
+			markup := fmt.Sprintf(
 				`<polygon points="%.2f,%.2f %.2f,%.2f %.2f,%.2f" fill="%s"/>`,
 				tipX, tipY, b1x, b1y, b2x, b2y, escAttr(stroke),
 			)
+			if collected != nil && !rc.preClipOnly {
+				rc.arrowFragments = append(rc.arrowFragments, connectorArrowFragment{ci, overlay.Len(), markup})
+			}
+			overlay.WriteString(markup)
 		}
 
 		// v3.0 — label pill slides along the polyline to a body-free
 		// segment (longest first); a midpoint that lands inside a part's
 		// projection swallowed the pill entirely under the old rule.
 		if strings.TrimSpace(c.Label) != "" && len(pts) >= 2 {
+			block := layoutConnectorText(c, 13)
+			if block.font != nil {
+				req := connectorTextRequest{index: ci, c: c, block: block, points: submittedPoints, curved: curved}
+				if collected != nil && !rc.preClipOnly {
+					req.drawn = collected.Drawing
+				}
+				measuredLabels = append(measuredLabels, req)
+				continue
+			}
+			// Connector labels still use an unbound browser font; a pill alone
+			// cannot certify their glyph envelope for new caption placements.
+			if protection != nil {
+				protection.uncertain = true
+			}
 			bg := c.LabelBg
 			if bg == "" {
 				bg = "#FFFFFFEE"
@@ -1160,15 +1376,15 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 
 			type seg struct{ mx, my, length, fromMid float64 }
 			total := 0.0
-			for i := 1; i < len(pts); i++ {
-				total += math.Hypot(pts[i][0]-pts[i-1][0], pts[i][1]-pts[i-1][1])
+			for i := 1; i < len(visibleRoute); i++ {
+				total += math.Hypot(visibleRoute[i][0]-visibleRoute[i-1][0], visibleRoute[i][1]-visibleRoute[i-1][1])
 			}
-			segs := make([]seg, 0, len(pts)-1)
+			segs := make([]seg, 0, len(visibleRoute)-1)
 			walked := 0.0
-			for i := 1; i < len(pts); i++ {
-				l := math.Hypot(pts[i][0]-pts[i-1][0], pts[i][1]-pts[i-1][1])
+			for i := 1; i < len(visibleRoute); i++ {
+				l := math.Hypot(visibleRoute[i][0]-visibleRoute[i-1][0], visibleRoute[i][1]-visibleRoute[i-1][1])
 				segs = append(segs, seg{
-					(pts[i-1][0] + pts[i][0]) / 2, (pts[i-1][1] + pts[i][1]) / 2,
+					(visibleRoute[i-1][0] + visibleRoute[i][0]) / 2, (visibleRoute[i-1][1] + visibleRoute[i][1]) / 2,
 					l, math.Abs(walked + l/2 - total/2),
 				})
 				walked += l
@@ -1190,29 +1406,82 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 					break
 				}
 			}
+			if collected != nil && !rc.preClipOnly {
+				collected.Drawing.Label = &ConnectorLabel{Text: c.Label, Rect: [4]float64{svgCoord(mx - textW/2), svgCoord(my - 10), svgCoord(textW), 20}, Anchor: [2]float64{svgCoord(mx), svgCoord(my)}}
+			}
 			placedPills = append(placedPills, screenRect{mx - textW/2, my - 10, mx + textW/2, my + 10})
+			if measureLabels && collectLabelConflicts {
+				x, y, w := svgCoord(mx-textW/2), svgCoord(my-10), svgCoord(textW)
+				labelTargets = append(labelTargets, connectorTextRectTarget{kind: "label", index: ci, rect: screenRect{x, y, x + w, y + 20}})
+			}
 			trackPt(mx-textW/2, my-10)
 			trackPt(mx+textW/2, my+10)
 			fmt.Fprintf(&overlay,
 				`<rect x="%.2f" y="%.2f" width="%.2f" height="20" rx="4" ry="4" fill="%s"/>`,
 				mx-textW/2, my-10, textW, escAttr(bg),
 			)
+			family, weight := connectorFont(c)
 			fmt.Fprintf(&overlay,
-				`<text x="%.2f" y="%.2f" dy=".35em" font-family="Inter, sans-serif" font-size="%.1f" font-weight="600" fill="%s" text-anchor="middle">%s</text>`,
-				mx, my, lfs, escAttr(ink), escapeXML(c.Label),
+				`<text x="%.2f" y="%.2f" dy=".35em" font-family="%s" font-size="%.1f" font-weight="%s" fill="%s" text-anchor="middle">%s</text>`,
+				mx, my, escAttr(family), lfs, escAttr(weight), escAttr(ink), escapeXML(c.Label),
 			)
 		}
 	}
 	connStart[len(conns)] = sb.Len()
+	// Append only after all arrows have been emitted: their recorded overlay
+	// byte offsets stay valid, and a late route cannot run through an early pill.
+	fonts := map[string]bool{}
+	for _, f := range textmetrics.FontsInSVG(svg) {
+		fonts[f.Hash()] = true
+	}
+	placements := resolveConnectorText(measuredLabels, bodyRects, placedPills, labelObstacles, labelStrokes)
+	var refined []bool
+	var bodySource connectorTextBodySource
+	if len(bodySources) > 0 && bodySources[0] != nil {
+		var body connectorTextBodies
+		loaded, supported := false, false
+		bodySource = func() (connectorTextBodies, bool) {
+			if !loaded {
+				body, supported = bodySources[0]()
+				loaded = true
+			}
+			return body, supported
+		}
+		refined = refineConnectorTextBodies(placements, measuredLabels, placedPills, labelObstacles, labelStrokes, bodySource)
+	}
+	refineConnectorTextJoint(placements, measuredLabels, bodyRects, placedPills, labelObstacles, labelStrokes, bodySource)
+	for i, req := range measuredLabels {
+		bg, ink := req.c.LabelBg, req.c.LabelColor
+		if bg == "" {
+			bg = "#FFFFFFEE"
+		}
+		if ink == "" {
+			ink = "#1F2433"
+		}
+		bodyRefined := len(refined) > i && refined[i]
+		label := emitConnectorText(&overlay, req, placements[i], bg, ink, fonts, bodyRefined)
+		measuredRecords = append(measuredRecords, ConnectorLabelRecord{req.index, label})
+		if req.drawn != nil {
+			req.drawn.Label = &label
+		}
+		r := connectorLabelRect(label)
+		placedPills = append(placedPills, r)
+		segRects = append(segRects, r)
+		if protection != nil {
+			protection.rects = append(protection.rects, r)
+			protection.uncertain = protection.uncertain || label.Typography.Placement == "blocked"
+		}
+		trackPt(r.x0, r.y0)
+		trackPt(r.x1, r.y1)
+	}
 
-	// Grow the viewBox to cover every connector waypoint (plus a pad
-	// for stroke width + arrowheads) BEFORE splicing the layer in, so
-	// routes that bend past the part bbox are never clipped.
+	// Keep the established layout margin, expanding only when actual submitted
+	// stroke/arrow ink exceeds it. Fixed padding alone clips wide connectors.
 	if cMinX <= cMaxX {
 		const pad = 16.0
 		svg = growViewBoxAround(svg, minSvgRect{
-			minX: cMinX - pad, minY: cMinY - pad,
-			maxX: cMaxX + pad, maxY: cMaxY + pad,
+			minX: math.Min(cMinX-pad, ink.minX), minY: math.Min(cMinY-pad, ink.minY),
+			maxX: math.Max(cMaxX+pad, ink.maxX), maxY: math.Max(cMaxY+pad, ink.maxY),
 		})
 	}
 
@@ -1251,26 +1520,8 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 	if !depthSort {
 		svg = spliceAfterParts(svg, `<g data-layer="connectors">`+sb.String()+`</g>`, nSubstrates)
 	} else {
-		idxByID := make(map[string]int, len(infos))
-		for i, p := range infos {
-			if p.id != "" {
-				idxByID[p.id] = i
-			}
-		}
 		layerOf := func(ci int) int {
-			fi, okF := idxByID[connectorTarget(effFrom[ci])]
-			ti, okT := idxByID[connectorTarget(effTo[ci])]
-			if !okF || !okT {
-				return nSubstrates
-			}
-			k := fi
-			if ti < k {
-				k = ti
-			}
-			if k < nSubstrates {
-				k = nSubstrates
-			}
-			return k
+			return connectorPaintLayer(effFrom[ci], effTo[ci], paintIndexes, nSubstrates, depthSort)
 		}
 		routes := sb.String()
 		layers := map[int]string{nSubstrates: ""} // base layer always exists (Studio parity)
@@ -1298,7 +1549,10 @@ func injectCompositeConnectors(svg string, conns []*Connector, infos []partInfo,
 	// a part's projection (occluded entry face) stays visible.
 	if overlay.Len() > 0 {
 		if closeIdx := strings.LastIndex(svg, "</svg>"); closeIdx >= 0 {
-			svg = svg[:closeIdx] + `<g data-layer="connector-overlay">` + overlay.String() + `</g>` + svg[closeIdx:]
+			svg = svg[:closeIdx] + `<g data-layer="connector-overlay">` + finishConnectorText(overlay.String(), measuredRecords) + `</g>` + svg[closeIdx:]
+			if collectLabelConflicts {
+				observeConnectorTextConflicts(measuredRecords, labelTargets, labelStrokes)
+			}
 		}
 	}
 	return svg, segRects
@@ -1554,103 +1808,6 @@ func partGroupEnd(svg string, from int) (int, bool) {
 	return 0, false
 }
 
-// partSilhouette returns the part's screen silhouette in composite
-// coords. Shapes with a registered geometry provider (M1+) get their
-// EXACT outline; everything else falls back to the bbox hexagon.
-func partSilhouette(p partInfo, tx, ty float64) [][2]float64 {
-	prov := iso25d.LookupShape(p.shape)
-	if prov == nil {
-		return silhouetteHex(p, tx, ty)
-	}
-	var params map[string]any
-	if n := prismSidesFor(p.shape, p.sides); n >= 3 {
-		params = map[string]any{"sides": n}
-	} else if p.sides >= 3 {
-		params = map[string]any{"sides": p.sides}
-	}
-	local := prov.Silhouette(p.w, p.d, p.h, params)
-	if len(local) < 3 {
-		return silhouetteHex(p, tx, ty)
-	}
-	// Provider local frame: origin sits at the projected bbox extremes,
-	// i.e. world-origin projection + (d*cos30, h). Convert to composite.
-	const c30 = 0.8660254037844386
-	ox, oy := projectIso(p.offWX, p.offWY, p.offWZ)
-	out := make([][2]float64, len(local))
-	for i, q := range local {
-		out[i] = [2]float64{
-			q[0] - p.d*c30 + ox + tx,
-			q[1] - p.h + oy + ty,
-		}
-	}
-	return out
-}
-
-// silhouetteHex returns the 6-corner screen silhouette of a part's
-// world bbox under the iso camera, in composite coords. Non-prismatic
-// shapes (cylinder, sphere, cloud) are approximated by their bbox hex —
-// slightly loose, which only makes arrow tips sit a touch earlier.
-func silhouetteHex(p partInfo, tx, ty float64) [][2]float64 {
-	w, d, h := p.w, p.d, p.h
-	x, y, z := p.offWX, p.offWY, p.offWZ
-	corners := [][3]float64{
-		{x, y, z + h}, {x + w, y, z + h}, {x + w, y, z},
-		{x + w, y + d, z}, {x, y + d, z}, {x, y + d, z + h},
-	}
-	out := make([][2]float64, 6)
-	for i, c := range corners {
-		sx, sy := projectIso(c[0], c[1], c[2])
-		out[i] = [2]float64{sx + tx, sy + ty}
-	}
-	return out
-}
-
-func pointInConvex(pt [2]float64, poly [][2]float64) bool {
-	n := len(poly)
-	sign := 0.0
-	for i := 0; i < n; i++ {
-		a, b := poly[i], poly[(i+1)%n]
-		cross := (b[0]-a[0])*(pt[1]-a[1]) - (b[1]-a[1])*(pt[0]-a[0])
-		if math.Abs(cross) < 1e-9 {
-			continue
-		}
-		if sign == 0 {
-			sign = cross
-		} else if sign*cross < 0 {
-			return false
-		}
-	}
-	return true
-}
-
-// segPolyEntry returns the intersection of segment a→b with a convex
-// polygon's boundary that is closest to a (the outside end).
-func segPolyEntry(a, b [2]float64, poly [][2]float64) ([2]float64, bool) {
-	bestT := math.Inf(1)
-	var best [2]float64
-	n := len(poly)
-	for i := 0; i < n; i++ {
-		p1, p2 := poly[i], poly[(i+1)%n]
-		d1x, d1y := b[0]-a[0], b[1]-a[1]
-		d2x, d2y := p2[0]-p1[0], p2[1]-p1[1]
-		den := d1x*d2y - d1y*d2x
-		if math.Abs(den) < 1e-9 {
-			continue
-		}
-		t := ((p1[0]-a[0])*d2y - (p1[1]-a[1])*d2x) / den
-		u := ((p1[0]-a[0])*d1y - (p1[1]-a[1])*d1x) / den
-		if t >= -1e-9 && t <= 1+1e-9 && u >= -1e-9 && u <= 1+1e-9 && t < bestT {
-			bestT = t
-			best = [2]float64{a[0] + t*d1x, a[1] + t*d1y}
-		}
-	}
-	return best, !math.IsInf(bestT, 1)
-}
-
-// clipRouteEnd trims a polyline where it dives inside `poly` near its
-// final point, so the visible line (and its arrowhead) terminate ON the
-// part's silhouette instead of underneath the body. The inset pulls the
-// tip slightly outside so the triangle stays fully visible.
 type drawnLine struct {
 	key string
 	pts [][2]float64
@@ -1668,42 +1825,6 @@ func coincidentFwd(a, b [][2]float64, eps float64) bool {
 		}
 	}
 	return true
-}
-
-func clipRouteEnd(pts [][2]float64, poly [][2]float64, inset float64) [][2]float64 {
-	if len(pts) < 2 || !pointInConvex(pts[len(pts)-1], poly) {
-		return pts
-	}
-	for i := len(pts) - 1; i >= 1; i-- {
-		if pointInConvex(pts[i-1], poly) {
-			continue
-		}
-		entry, ok := segPolyEntry(pts[i-1], pts[i], poly)
-		if !ok {
-			return pts
-		}
-		dx, dy := entry[0]-pts[i-1][0], entry[1]-pts[i-1][1]
-		if l := math.Hypot(dx, dy); l > inset {
-			entry[0] -= dx / l * inset
-			entry[1] -= dy / l * inset
-		}
-		return append(append([][2]float64{}, pts[:i]...), entry)
-	}
-	return pts
-}
-
-// clipRouteStart is clipRouteEnd from the other side.
-func clipRouteStart(pts [][2]float64, poly [][2]float64, inset float64) [][2]float64 {
-	rev := make([][2]float64, len(pts))
-	for i, p := range pts {
-		rev[len(pts)-1-i] = p
-	}
-	rev = clipRouteEnd(rev, poly, inset)
-	out := make([][2]float64, len(rev))
-	for i, p := range rev {
-		out[len(rev)-1-i] = p
-	}
-	return out
 }
 
 // prismSidesFor resolves the side count for a prism-family shape:

@@ -100,11 +100,27 @@
                 "labelBg": {
                   "type": "string"
                 },
+                "labelColor": {
+                  "type": "string"
+                },
+                "labelFontFamily": {
+                  "description": "Source Sans Pro opts into embedded font resources, measured multiline labels and continuous inline placement. Unknown fonts/scripts remain estimated.",
+                  "type": "string"
+                },
+                "labelFontSize": {
+                  "description": "Default 13 in iso, 10 in top.",
+                  "type": "number"
+                },
+                "labelFontWeight": {
+                  "description": "Default 600. Embedded font weights: 400, 600, 700; normal and bold aliases.",
+                  "type": "string"
+                },
                 "routing": {
                   "description": "orthogonal bends along iso ground axes (grid-aligned); bezier = soft quadratic arc.",
                   "enum": [
                     "straight",
                     "orthogonal",
+                    "orthogonal2",
                     "bezier"
                   ],
                   "type": "string"
@@ -127,6 +143,25 @@
                 "to": {
                   "description": "Destination part id (same syntax).",
                   "type": "string"
+                },
+                "waypoints3d": {
+                  "description": "Explicit interior XYZ world corners for orthogonal/orthogonal2. Omitted coordinates are absolute zero. A nonempty list overrides waypoints, bend and automatic routing; endpoints remain resolved from from/to.",
+                  "items": {
+                    "properties": {
+                      "wx": {
+                        "type": "number"
+                      },
+                      "wy": {
+                        "type": "number"
+                      },
+                      "wz": {
+                        "type": "number"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "maxItems": 512,
+                  "type": "array"
                 }
               },
               "required": [

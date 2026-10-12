@@ -17,76 +17,27 @@ import (
 // This matches the Vite/JS cushion-badge baseline: distinct top + side, sharp
 // outline, single colour on each face. CornerRadius is in local (W, D) units.
 func RenderIsoBoxRounded(o IsoBoxOpts) string {
+	return renderIsoBoxRounded(o, nil)
+}
+
+func renderIsoBoxRounded(o IsoBoxOpts, fonts fontResources) string {
 	w, d, h, m := o.Width, o.Depth, o.Height, o.Margin
 	if m <= 0 {
 		m = 24
 	}
-	r := o.CornerRadius
-	if r > w/2 {
-		r = w / 2
-	}
-	if r > d/2 {
-		r = d / 2
-	}
-	if r <= 0 {
-		r = math.Min(w, d) * 0.18
-	}
-
-	outline := sampleRoundedRectCW(w, d, r)
-	n := len(outline)
-
-	p := make([]roundedPr, n)
-	minX := math.Inf(1)
-	maxX := math.Inf(-1)
-	minY := math.Inf(1)
-	maxY := math.Inf(-1)
-	for i, q := range outline {
-		sx, sy := project(q[0], q[1], 0)
-		p[i] = roundedPr{topX: sx, topY: sy - h, botX: sx, botY: sy}
-		if sx < minX {
-			minX = sx
-		}
-		if sx > maxX {
-			maxX = sx
-		}
-		if sy-h < minY {
-			minY = sy - h
-		}
-		if sy > maxY {
-			maxY = sy
-		}
+	p, frontIdx := roundedBodyGeometry(w, d, h, o.CornerRadius)
+	minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
+	for _, q := range p {
+		minX, maxX = math.Min(minX, q.topX), math.Max(maxX, q.topX)
+		minY, maxY = math.Min(minY, q.topY), math.Max(maxY, q.botY)
 	}
 	tx, ty := -minX+m, -minY+m
-	viewW := maxX - minX + 2*m
-	viewH := maxY - minY + 2*m
+	viewW, viewH := maxX-minX+2*m, maxY-minY+2*m
 	for i := range p {
 		p[i].topX += tx
 		p[i].topY += ty
 		p[i].botX += tx
 		p[i].botY += ty
-	}
-
-	// Front-facing test in local frame (screen-CW outline → outward normal
-	// = rotate tangent 90° CW; visible against iso (1,1,0) camera when
-	// dy > dx where (dx, dy) is segment tangent in local coords).
-	visible := make([]bool, n)
-	for i := 0; i < n; i++ {
-		j := (i + 1) % n
-		dx := outline[j][0] - outline[i][0]
-		dy := outline[j][1] - outline[i][1]
-		visible[i] = dy > dx
-	}
-
-	// Find the single visible run [transStart .. transEnd] inclusive.
-	transStart, transEnd := -1, -1
-	for i := 0; i < n; i++ {
-		prev := (i - 1 + n) % n
-		if visible[i] && !visible[prev] {
-			transStart = i
-		}
-		if !visible[i] && visible[prev] {
-			transEnd = prev
-		}
 	}
 
 	var sb strings.Builder
@@ -247,22 +198,6 @@ func RenderIsoBoxRounded(o IsoBoxOpts) string {
 		fmt.Fprintf(&sb, `<defs>%s</defs>`, faceDefs.String())
 	}
 
-	// Build paths.
-	frontIdx := []int{}
-	if transStart >= 0 && transEnd >= 0 {
-		i := transStart
-		for {
-			frontIdx = append(frontIdx, i)
-			if i == transEnd {
-				break
-			}
-			i = (i + 1) % n
-			if len(frontIdx) > n {
-				break
-			}
-		}
-	}
-
 	if o.Wireframe {
 		// Top face stroked outline.
 		fmt.Fprintf(&sb, `<path data-face="top-wire" d="%s" fill="none" stroke="%s" stroke-width="%.2f" stroke-linejoin="round"/>`,
@@ -379,6 +314,7 @@ func RenderIsoBoxRounded(o IsoBoxOpts) string {
 		topOriginX, topOriginY, w, d,
 		o.Label, o.LabelLines, o.Icon, o.IconScale, o.IconAnchor, o.IconOffX, o.IconOffY,
 		o.FontFamily, o.FontSize, o.FontWeight, o.FontColor,
+		fonts,
 	)
 
 	sb.WriteString(`</g>`)
@@ -442,7 +378,19 @@ func sampleRoundedRectCW(w, d, r float64) [][2]float64 {
 		theta := math.Pi + t*math.Pi/2
 		add(r+r*math.Cos(theta), r+r*math.Sin(theta))
 	}
-	return out
+	// At the radius clamp, straight spans collapse to a point. Duplicate
+	// vertices create false invisible edges and split the otherwise single
+	// front run, which used to drop most of a capsule's side wall.
+	clean := out[:0]
+	for _, p := range out {
+		if len(clean) == 0 || math.Hypot(p[0]-clean[len(clean)-1][0], p[1]-clean[len(clean)-1][1]) > 1e-9 {
+			clean = append(clean, p)
+		}
+	}
+	if len(clean) > 1 && math.Hypot(clean[0][0]-clean[len(clean)-1][0], clean[0][1]-clean[len(clean)-1][1]) <= 1e-9 {
+		clean = clean[:len(clean)-1]
+	}
+	return clean
 }
 
 type roundedPr struct {
@@ -556,3 +504,38 @@ func botFrontPath(p []roundedPr, frontIdx []int) string {
 }
 
 var _ = roundedPr{} // keep type comment around for readers
+
+// roundedBodyGeometry is shared by rendering and filled-coverage detection.
+// Both consume exactly the same visible run, including degenerate corners.
+func roundedBodyGeometry(w, d, h, r float64) ([]roundedPr, []int) {
+	outline := sampleRoundedRectCW(w, d, roundedRadius(w, d, r))
+	n := len(outline)
+	p := make([]roundedPr, n)
+	visible := make([]bool, n)
+	for i, q := range outline {
+		x, y := project(q[0], q[1], 0)
+		p[i] = roundedPr{topX: x, topY: y - h, botX: x, botY: y}
+		b := outline[(i+1)%n]
+		visible[i] = b[1]-q[1] > b[0]-q[0]
+	}
+	start, end := -1, -1
+	for i := range outline {
+		prev := (i - 1 + n) % n
+		if visible[i] && !visible[prev] {
+			start = i
+		}
+		if !visible[i] && visible[prev] {
+			end = i
+		}
+	}
+	var front []int
+	if start >= 0 && end >= 0 {
+		for i := start; ; i = (i + 1) % n {
+			front = append(front, i)
+			if i == end || len(front) > n {
+				break
+			}
+		}
+	}
+	return p, front
+}

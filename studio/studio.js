@@ -293,30 +293,77 @@ function pruneSelection(){
   }
   applySelectionClasses();
 }
-// Screen-space AABB of a model part: project the world box's 8 corners with
-// the SAME iso projection the renderer uses (worldToSvgUser), then map to
-// screen px via the live CTM. Pure model math — no SVG DOM hit-testing.
-function partScreenAABB(pm){
-  const svg=zoomer.querySelector('svg'); if(!svg) return null;
-  const m=svg.getScreenCTM(); if(!m) return null;
-  const zs=[pm.z||0,(pm.z||0)+(pm.h||0)];
-  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
-  for(const wx of [pm.x,pm.x+pm.w]) for(const wy of [pm.y,pm.y+pm.d]) for(const wz of zs){
-    const [ux,uy]=worldToSvgUser(wx,wy,wz);
-    const sx=m.a*ux+m.c*uy+m.e, sy=m.b*ux+m.d*uy+m.f;
-    if(sx<minX)minX=sx; if(sx>maxX)maxX=sx; if(sy<minY)minY=sy; if(sy>maxY)maxY=sy;
+// Projected body/content polygons come from the same shape and layout resolvers
+// as rendering. The union retains concave gaps and all stack instances.
+function partScreenRegions(pm){
+  const svg=zoomer.querySelector('svg'); if(!svg) return [];
+  const m=svg.getScreenCTM(); if(!m) return [];
+  const [tx,ty]=sceneOrigin();
+  let regions=pm.selectionRegions;
+  if(!Array.isArray(regions)){
+    // Compatibility with an older server; new models always supply regions.
+    const points=[];
+    for(const x of [pm.x,pm.x+pm.w]) for(const y of [pm.y,pm.y+pm.d]) for(const z of [pm.z||0,(pm.z||0)+(pm.h||0)]){
+      const [u,v]=worldToSvgUser(x,y,z); points.push([u-tx,v-ty]);
+    }
+    const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);
+    regions=[[[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)],[Math.min(...xs),Math.max(...ys)]]];
   }
-  return {minX,minY,maxX,maxY};
+  const out=regions.map(poly=>poly.map(([x,y])=>[m.a*(x+tx)+m.c*(y+ty)+m.e,m.b*(x+tx)+m.d*(y+ty)+m.f]));
+  out.push(...screenLabelRegions(pm.id,svg));
+  return out;
 }
-// marqueeHits: ids of leaf nodes whose projected AABB intersects the screen
-// rect {left,top,right,bottom}. Uses the server's interaction model.
+
+let screenLabelCache=null;
+function screenLabelRegions(id,svg){
+  const records=window.screenLabels;
+  if(!screenLabelCache||screenLabelCache.svg!==svg||screenLabelCache.records!==records){
+    const groups=Array.from(svg.querySelectorAll('g[data-screen-label]'));
+    const byID=new Map();
+    let valid=Array.isArray(records)&&records.length===groups.length;
+    if(valid) for(let i=0;i<records.length;i++){
+      const record=records[i],g=groups[i],b=record&&record.bounds;
+      if(!record||typeof (record.part_id||'')!=='string'||(g.getAttribute('data-part-id')||'')!==(record.part_id||'')||
+         !b||![b.x,b.y,b.width,b.height].every(Number.isFinite)||b.width<=0||b.height<=0){valid=false;break;}
+      const owner=(record.part_id||'').replace(/~\d+$/,'');
+      if(!owner) continue;
+      if(!byID.has(owner)) byID.set(owner,[]);
+      byID.get(owner).push({g,record});
+    }
+    // Old servers and unmatched records keep the full DOM fallback. Never
+    // associate a stale record with a different source part by array position.
+    if(!valid){
+      byID.clear();
+      groups.forEach(g=>{const owner=(g.getAttribute('data-part-id')||'').replace(/~\d+$/,'');if(!owner)return;if(!byID.has(owner))byID.set(owner,[]);byID.get(owner).push({g,record:null});});
+    }
+    screenLabelCache={svg,records,byID};
+  }
+  const out=[];
+  for(const {g,record} of screenLabelCache.byID.get(id)||[]){
+    if(!record||record.text_metrics!=='shaped-ink'){
+      // An unbound font can paint outside its estimated chip. Retain the real
+      // browser envelope until its glyph geometry has a bound resource.
+      const b=g.getBoundingClientRect();
+      if(b.width&&b.height)out.push([[b.left,b.top],[b.right,b.top],[b.right,b.bottom],[b.left,b.bottom]]);
+      continue;
+    }
+    const m=g.getScreenCTM();if(!m)continue;
+    const b=record.bounds;
+    // Use the CURRENT group transform: a live drag translates the DOM before
+    // the next server result arrives. Committed geometry must follow it.
+    out.push([[b.x,b.y],[b.x+b.width,b.y],[b.x+b.width,b.y+b.height],[b.x,b.y+b.height]].map(([x,y])=>[m.a*x+m.c*y+m.e,m.b*x+m.d*y+m.f]));
+  }
+  return out;
+}
+function partScreenAABB(pm){
+  const pts=partScreenRegions(pm).flat(); if(!pts.length) return null;
+  return {minX:Math.min(...pts.map(p=>p[0])),minY:Math.min(...pts.map(p=>p[1])),maxX:Math.max(...pts.map(p=>p[0])),maxY:Math.max(...pts.map(p=>p[1]))};
+}
 function marqueeHits(r){
   const out=[];
   if(!window.interactionModel||!r) return out;
   for(const pm of window.interactionModel){
-    if(pm.container) continue;
-    const b=partScreenAABB(pm); if(!b) continue;
-    if(b.minX<=r.right&&b.maxX>=r.left&&b.minY<=r.bottom&&b.maxY>=r.top) out.push(pm.id);
+    if(!pm.container&&partScreenRegions(pm).some(poly=>polygonTouchesRect(poly,r))) out.push(pm.id);
   }
   return out;
 }
@@ -336,7 +383,14 @@ let connTarget=null;     // id of the node the pointer is currently over
 // Array of {id, container, x, y, w, d, anchors:[{name,wx,wy}]}.
 // Exposed on window so E2E tests (Playwright) can inspect it directly.
 window.interactionModel=null;
-function updateModel(data){ if(data&&data.model) window.interactionModel=data.model; }
+window.screenLabels=null;
+function updateModel(data){
+ if(data&&data.model) window.interactionModel=data.model;
+ window.screenLabels=data&&Array.isArray(data.screenLabels)?data.screenLabels:null;
+ screenLabelCache=null;
+ window.connectorRoutes=data&&data.routes||[];
+ window.connectorRouteSource=srcEl.value;
+}
 
 const HANDLE_R=5, HANDLE_COL='#2563EB', HANDLE_HOV='#1D4ED8';
 
@@ -368,9 +422,25 @@ function sceneOrigin(){
 }
 // world → SVG-user, applying the SAME projection the renderer uses
 // (projectIso subtracts wz, so a handle rides the correct face height).
+function isTopView(){return zoomer.querySelector('svg')?.dataset.projection==='top';}
 function worldToSvgUser(wx,wy,wz){
   const [tx,ty]=sceneOrigin();
+  if(isTopView()) return [wx+tx,wy+ty];
   return [(wx-wy)*C30+tx,(wx+wy)*S30-(wz||0)+ty];
+}
+// Preserve world (0,0) and the effective scale across viewBox/margin changes.
+// A responsive SVG can change its own scale independently of Studio's zoom.
+// Recentring a moved node on the cursor loses the original grab offset.
+function captureSceneFrame(){
+  const svg=zoomer.querySelector('svg'),m=svg&&svg.getScreenCTM();if(!m) return null;
+  const [x,y]=sceneOrigin();return [m.a*x+m.c*y+m.e,m.b*x+m.d*y+m.f,Math.hypot(m.a,m.b)];
+}
+function restoreSceneFrame(frame){
+  let now=captureSceneFrame();if(!frame||!now)return;
+  if(frame[2]>0&&now[2]>0){
+    scale*=frame[2]/now[2];apply();now=captureSceneFrame();if(!now)return;
+  }
+  panX+=frame[0]-now[0];panY+=frame[1]-now[1];apply();
 }
 // client (screen) px → SVG-user via the live CTM (covers viewBox, flex, and
 // the zoomer's pan/zoom). Used for drag endpoints + nearest-anchor tests.
@@ -426,17 +496,20 @@ function nadirUser(g){
   return best;
 }
 
-// nearestAnchor finds the anchor on partId nearest the cursor and returns
-// {name, cx, cy} in SVG-user coords. Returns null if the part has no model.
-function nearestAnchor(partId, clientX, clientY){
-  if(!window.interactionModel) return null;
-  const pm=window.interactionModel.find(p=>p.id===partId);
-  if(!pm||!pm.anchors||!pm.anchors.length) return null;
-  const [ux,uy]=clientToSvgUser(clientX,clientY);
-  let best=null, bestD=Infinity;
-  for(const a of pm.anchors){
-    const [cx,cy]=worldToSvgUser(a.wx,a.wy,a.wz);
-    const d=Math.hypot(ux-cx,uy-cy);
+// One source may have several displayed instances. Ports retain the exact
+// instance ID; source editing and movement continue to use baseId separately.
+function connectionPorts(partId){
+  const pm=window.interactionModel&&window.interactionModel.find(p=>p.id===partId.replace(/~\d+$/,''));
+  if(!pm) return null;
+  if(Array.isArray(pm.ports)&&pm.ports.length) return pm.ports.filter(p=>p.instanceId===partId);
+  if(Array.isArray(pm.ports)&&isTopView()) return [];
+  return pm.anchors||[]; // compatibility with older servers
+}
+function nearestAnchor(partId,clientX,clientY){
+  const ports=connectionPorts(partId);if(!ports||!ports.length)return null;
+  const [ux,uy]=clientToSvgUser(clientX,clientY);let best=null,bestD=Infinity;
+  for(const a of ports){
+    const [cx,cy]=worldToSvgUser(a.wx,a.wy,a.wz),d=Math.hypot(ux-cx,uy-cy);
     if(d<bestD){bestD=d;best={name:a.name,cx,cy};}
   }
   return best;
@@ -448,18 +521,20 @@ function nearestAnchor(partId, clientX, clientY){
 // projected to SVG-user space; falls back to polygon geometry for shapes not
 // in the model (e.g. d2 files). Dots are sized in SVG-user units scaled by
 // 1/CTM so they read as a constant on-screen size.
+// New models expose fixed ports in either projection. Legacy face anchors
+// remain the fallback for older servers and non-body annotation shapes.
 function showHandles(g){
   const layer=handleLayer(); if(!layer) return;
   clearHandles(true);
-  const partId=g.getAttribute('data-part-id').replace(/~\d+$/,'');
+  const partId=g.getAttribute('data-part-id');
 
   // Build the list of {name, cx, cy} anchor points in SVG-user coords.
   let anchors=[];
-  const pm=window.interactionModel&&window.interactionModel.find(p=>p.id===partId);
-  if(pm&&pm.anchors&&pm.anchors.length){
-    for(const a of pm.anchors){
+  const ports=connectionPorts(partId);
+  if(ports!==null){
+    for(const a of ports){
       const [cx,cy]=worldToSvgUser(a.wx,a.wy,a.wz);
-      anchors.push({name:a.name,cx,cy});
+      anchors.push({name:a.name,cx,cy,approximate:a.approximate});
     }
   }else{
     // Polygon fallback: top/right/bottom(nadir)/left
@@ -475,7 +550,7 @@ function showHandles(g){
   }
 
   const s=userPxScale();
-  anchors.forEach(({name,cx,cy})=>{
+  anchors.forEach(({name,cx,cy,approximate})=>{
     const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
     c.setAttribute('cx',cx); c.setAttribute('cy',cy);
     c.setAttribute('r',HANDLE_R*s);
@@ -483,7 +558,8 @@ function showHandles(g){
     c.setAttribute('stroke','#fff'); c.setAttribute('stroke-width',1.5*s);
     c.setAttribute('class','conn-handle');
     c.style.cssText='pointer-events:all;cursor:crosshair;';
-    c.dataset.name=name;
+    c.dataset.name=name;c.dataset.instanceId=partId;
+    if(approximate)c.setAttribute('stroke-dasharray','2 2');
     c.dataset.cx=cx; c.dataset.cy=cy;
     c.addEventListener('mouseenter',()=>{cancelClear();c.setAttribute('fill',HANDLE_HOV);});
     c.addEventListener('mouseleave',()=>c.setAttribute('fill',HANDLE_COL));
@@ -526,8 +602,13 @@ function highlightNearestHandle(clientX, clientY){
 
 window.addEventListener('mousemove',ev=>{
   if(connDrag){
-    const [ux,uy]=clientToSvgUser(ev.clientX,ev.clientY);
+    const handle=ev.target?.closest?.('.conn-handle'),node=ev.target?.closest?.('g[data-part-id]');
+    const id=handle?.dataset.instanceId||node?.getAttribute('data-part-id');
+    connTarget=id&&id!==connDrag.fromId?id:null;
+    const target=connTarget&&nearestAnchor(connTarget,ev.clientX,ev.clientY);
+    const [ux,uy]=target?[target.cx,target.cy]:clientToSvgUser(ev.clientX,ev.clientY);
     connDrag.line.setAttribute('points',connDrag.startX+','+connDrag.startY+' '+ux+','+uy);
+    if(target)highlightNearestHandle(ev.clientX,ev.clientY);
     return;
   }
   const layer=zoomer.querySelector('#conn-handles');
@@ -553,24 +634,28 @@ window.addEventListener('mouseup',async ev=>{
   const toId=connTarget;
   connTarget=null;
   if(!toId||toId===drag.fromId||!serverOK) return;
-  pushUndo();
+  const target=nearestAnchor(toId,ev.clientX,ev.clientY);
+  await commitConnection(drag.fromId,drag.fromAnchor||'',toId,target?target.name:'');
+},true);
+
+async function commitConnection(fromId,fromAnchor,toId,toAnchor){
+  if(!serverOK)return false;
   try{
-    // Find the anchor on the target node nearest to where the drag was released.
-    const toAnchorInfo=nearestAnchor(toId, ev.clientX, ev.clientY);
-    const toAnchor=toAnchorInfo?toAnchorInfo.name:'';
-    const fromAnchor=drag.fromAnchor||'';
-    let url='/api/op?op=add-edge&from='+encodeURIComponent(drag.fromId)+'&to='+encodeURIComponent(toId)+'&format='+encodeURIComponent(LANG);
+    let url='/api/op?op=add-edge&from='+encodeURIComponent(fromId)+'&to='+encodeURIComponent(toId)+'&format='+encodeURIComponent(LANG);
     if(fromAnchor) url+='&fanchor='+encodeURIComponent(fromAnchor);
     if(toAnchor)   url+='&tanchor='+encodeURIComponent(toAnchor);
-    const r=await fetch(url,{method:'POST',body:srcEl.value});
-    if(!r.ok) return;
+    const r=await fetch(url+projQS(),{method:'POST',body:srcEl.value});
+    if(!r.ok) return false;
     const data=await r.json();
+    if(!data.svg||typeof data.yaml!=='string')return false;
+    const frame=captureSceneFrame();pushUndo();
     if(typeof data.yaml==='string'){ srcEl.value=data.yaml; setDirty(srcEl.value!==ORIGINAL);
       try{localStorage.setItem(DRAFTKEY,srcEl.value);}catch(_){} }
     if(data.svg){ updateModel(data); zoomer.innerHTML=data.svg; buildMap(); paint(pinnedRange()); wireHover(); wireDrag(); adaptStage(); markRendered(); }
-    showIssues(data.issues||[]);
-  }catch(_){}
-},true);
+    restoreSceneFrame(frame);
+    showIssues(data.issues||[]);return true;
+  }catch(_){return false;}
+}
 
 function wireHover(){
   zoomer.querySelectorAll('g[data-part-id]').forEach(g=>{
@@ -578,13 +663,16 @@ function wireHover(){
     g.style.cursor='move';
     g.addEventListener('mouseenter',()=>{
       g.classList.add('hi');
-      if(connDrag){ connTarget=id.replace(/~\d+$/,''); return; }
+      if(connDrag){ connTarget=id; showHandles(g); return; }
       showHandles(g);
       const r=rangeFor(id); if(!r) return;
       paint(r); scrollToLine(r[0]);
     });
     g.addEventListener('mouseleave',(ev)=>{
-      if(connDrag){ if(connTarget===id.replace(/~\d+$/,'')) connTarget=null; return; }
+      if(connDrag){
+        if(ev.relatedTarget?.classList?.contains('conn-handle')&&ev.relatedTarget.dataset.instanceId===id)return;
+        if(connTarget===id)connTarget=null;return;
+      }
       // Don't clear handles if the cursor moved onto one of them — they live
       // in an overlay on top of the node and the browser fires mouseleave on
       // the <g> when the pointer enters an overlaid element.
@@ -639,75 +727,181 @@ function wireHover(){
 const C30=0.8660254037844387, S30=0.5;
 let nodeDrag=null, edgeDrag=null;
 function screenToWorldDelta(dsx,dsy){
+  if(isTopView()) return [dsx,dsy];
   // invert the iso ground-plane projection (sx=(wx-wy)c30, sy=(wx+wy)s30)
   return [dsx/(2*C30)+dsy/(2*S30), -dsx/(2*C30)+dsy/(2*S30)];
 }
-/* ── per-segment edge editing (drawio-style orthogonal waypoints) ────
-   The renderer tags each connector with data-route="sx,sy,wx,wy ..." —
-   every corner in pre-clip SVG-user AND world coords, source→target. We
-   hit-test which segment the pointer grabbed, move ONLY that segment along
-   its perpendicular world axis (inserting a corner at a docked endpoint so
-   the endpoints never move), and post the resulting interior waypoint list.
-   All structural math is in world coords; screen is only for hit-test and
-   live preview, so it round-trips exactly with what the server re-renders. */
-function parseRoute(p){
-  const a=p.getAttribute('data-route'); if(!a) return null;
-  const r=a.trim().split(/\s+/).map(t=>{const n=t.split(',').map(Number);
-    return {sx:n[0],sy:n[1],wx:n[2],wy:n[3]};});
-  return r.length>=2 ? r : null;
+// Route provenance comes from the same render as the SVG. Editing a stale
+// diagram or an ambiguous projected overlap must never guess a world segment.
+function connectorRouteForPath(p){
+  if(window.connectorRouteSource!==srcEl.value || isTopView()) return null;
+  return (window.connectorRoutes||[]).find(r=>r.index===+p.getAttribute('data-connector'))||null;
 }
+// Include visible legs without edit provenance: they still compete visually
+// with nearby editable legs. Hidden or endpoint-clipped geometry does not.
+function visibleRouteSegments(p){
+  const r=connectorRouteForPath(p),d=r&&r.drawing;
+  if(!d||d.kind!=='polyline')return [];
+  const depth=d.spatial&&d.spatial.mode==='depth';
+  const coverage=depth?d.spatial.spans:d.body_coverage?.spans;
+  const spans=[];
+  for(const cover of coverage||[]){
+    if((depth?cover.occluders||[]:cover.opaque_parts||[]).length)continue;
+    const a=d.points[cover.segment],b=d.points[cover.segment+1];
+    const lo=cover.t0,hi=cover.t1;if(!a||!b||hi<=lo)continue;
+    spans.push({segment:cover.segment,t0:lo,t1:hi,sx:a[0]+(b[0]-a[0])*lo,sy:a[1]+(b[1]-a[1])*lo,
+      ex:a[0]+(b[0]-a[0])*hi,ey:a[1]+(b[1]-a[1])*hi});
+  }
+  return spans;
+}
+function editableRouteSegments(p){
+  const r=connectorRouteForPath(p);
+  if(!r||!r.drawing||!r.world3d)return [];
+  const spans=[],drawing=r.drawing,bySegment=new Map();
+  for(const span of visibleRouteSegments(p)){
+    if(!bySegment.has(span.segment))bySegment.set(span.segment,[]);
+    bySegment.get(span.segment).push(span);
+  }
+  for(const s of drawing.editable||[]){
+    const a=drawing.points[s.segment],b=drawing.points[s.segment+1];
+    const w=r.world3d[s.route_segment],v=r.world3d[s.route_segment+1];
+    if(!a||!b||!w||!v)continue;
+    const axis=[0,1,2].find(k=>Math.abs(w[k]-v[k])>1e-5);
+    if(axis===undefined)continue;
+    for(const cover of bySegment.get(s.segment)||[]){
+      const lo=Math.max(s.t0,cover.t0),hi=Math.min(s.t1,cover.t1);
+      if(hi<=lo)continue;
+      spans.push({segment:s.segment,j:s.route_segment,axis,sx:a[0]+(b[0]-a[0])*lo,sy:a[1]+(b[1]-a[1])*lo,
+        ex:a[0]+(b[0]-a[0])*hi,ey:a[1]+(b[1]-a[1])*hi});
+    }
+  }
+  return spans;
+}
+
 function distToSeg(px,py,ax,ay,bx,by){
   const vx=bx-ax,vy=by-ay,wx=px-ax,wy=py-ay;
-  const L=vx*vx+vy*vy; let t=L>0?(wx*vx+wy*vy)/L:0; t=Math.max(0,Math.min(1,t));
-  const dx=px-(ax+t*vx),dy=py-(ay+t*vy); return Math.hypot(dx,dy);
+  const length=vx*vx+vy*vy; let t=length>0?(wx*vx+wy*vy)/length:0; t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(ax+t*vx),py-(ay+t*vy));
 }
-function nearestSegment(p,route,cx,cy){
-  // cursor → SVG-user coords (the space data-route's sx,sy live in)
-  const m=p.getScreenCTM(); if(!m) return {j:0,axisIsX:Math.abs(route[1].wx-route[0].wx)>=Math.abs(route[1].wy-route[0].wy)};
-  const pt=p.ownerSVGElement.createSVGPoint(); pt.x=cx; pt.y=cy;
-  const u=pt.matrixTransform(m.inverse());
-  let best=0,bd=Infinity;
-  for(let i=0;i<route.length-1;i++){
-    const d=distToSeg(u.x,u.y,route[i].sx,route[i].sy,route[i+1].sx,route[i+1].sy);
-    if(d<bd){bd=d;best=i;}
+function segmentHitCandidates(p){
+  const m=p.getScreenCTM();if(!m)return null;
+  const project=s=>{
+    const a=new DOMPoint(s.sx,s.sy).matrixTransform(m),b=new DOMPoint(s.ex,s.ey).matrixTransform(m);
+    return {...s,ax:a.x,ay:a.y,bx:b.x,by:b.y};
+  };
+  return {editable:editableRouteSegments(p).map(project),visible:visibleRouteSegments(p).map(project)};
+}
+function nearestSegmentCandidate(candidates,cx,cy){
+  if(!candidates)return null;
+  const distanceTo=s=>distToSeg(cx,cy,s.ax,s.ay,s.bx,s.by);
+  let best=null,distance=7;
+  for(const s of candidates.editable){
+    const d=distanceTo(s);
+    if(d<distance){best=s;distance=d;}
   }
-  const a=route[best],b=route[best+1];
-  return {j:best, axisIsX: Math.abs(b.wx-a.wx)>=Math.abs(b.wy-a.wy)};
-}
-// Move segment j perpendicular by delta (world units), keeping the two
-// docked endpoints (index 0 and last) fixed by inserting corners. Returns a
-// fresh world-corner list. axisIsX: segment runs along world-x, moves in wy.
-function editSegment(route,j,axisIsX,delta){
-  const W=route.map(r=>({wx:r.wx,wy:r.wy})); const N=W.length, k=axisIsX?'wy':'wx';
-  const isStart=j===0, isEnd=j+1===N-1;
-  if(!isStart && !isEnd){ W[j][k]+=delta; W[j+1][k]+=delta; return W; }
-  if(isStart && isEnd){
-    const A={wx:W[0].wx,wy:W[0].wy}, B={wx:W[1].wx,wy:W[1].wy}; A[k]+=delta; B[k]+=delta;
-    return [W[0],A,B,W[1]];
+  if(!best)return null;
+  // A one-CSS-pixel separation is required from another visible leg of this
+  // same SVG path. Native hit testing already distinguishes different paths.
+  // A crossing or near tie must not choose a world segment by array order.
+  for(const s of candidates.visible){
+    if(s.segment!==best.segment&&distanceTo(s)<=distance+1)return null;
   }
-  if(isStart){
-    const ins={wx:W[0].wx,wy:W[0].wy}; ins[k]+=delta; W[1][k]+=delta;
-    return [W[0],ins,...W.slice(1)];
+  return best;
+}
+function nearestEditableSegment(p,cx,cy){
+  return nearestSegmentCandidate(segmentHitCandidates(p),cx,cy);
+}
+
+function beginSegmentDrag(p,seg,e){
+  if(!serverOK||nodeDrag||edgeDrag) return;
+  removeSegHandles(p);p.classList.remove('edge-hover');
+  renderVersion++;
+  const m=p.ownerSVGElement.getScreenCTM();if(!m)return;
+  edgeDrag={segmentEdit:true,el:p,ci:+p.getAttribute('data-connector'),seg,x:e.clientX,y:e.clientY,
+    inverse:m.inverse(),source:srcEl.value,projection:VIEWMODE,originalSvg:zoomer.innerHTML,
+    frame:captureSceneFrame(),version:0,accepted:-1,desired:null,result:null,running:false,released:false,cancelled:false};
+  document.body.style.cursor='grabbing';
+}
+window.addEventListener('blur',()=>cancelSegmentDrag());
+function segmentDragCurrent(d){
+  return edgeDrag===d&&!d.cancelled&&srcEl.value===d.source&&VIEWMODE===d.projection;
+}
+function segmentDragDelta(d,e){
+  // Freeze the full initial CTM. SVG replacement/viewBox changes during the
+  // preview must not feed back into the world delta of this same gesture.
+  const a=new DOMPoint(d.x,d.y).matrixTransform(d.inverse),b=new DOMPoint(e.clientX,e.clientY).matrixTransform(d.inverse);
+  const w=screenToWorldDelta(b.x-a.x,b.y-a.y);
+  if(d.seg.axis===0)w[0]=0;else if(d.seg.axis===1)w[1]=0;
+  return w.map(v=>Math.round(v*1e6)/1e6);
+}
+function requestSegmentPreview(d,e,release){
+  if(!segmentDragCurrent(d)){cancelSegmentDrag();return;}
+  const delta=segmentDragDelta(d,e);
+  if(release)d.released=true;
+  if(Math.abs(delta[0])<=2&&Math.abs(delta[1])<=2){
+    if(release){cancelSegmentDrag();return;}
+    delta[0]=delta[1]=0;
   }
-  const ins={wx:W[N-1].wx,wy:W[N-1].wy}; ins[k]+=delta; W[N-2][k]+=delta;
-  return [...W.slice(0,N-1),ins,W[N-1]];
+  if(!d.desired||d.desired[0]!==delta[0]||d.desired[1]!==delta[1]){
+    d.desired=delta;d.version++;d.result=null;
+  }
+  if(d.released)marqueeJustEnded=true;
+  pumpSegmentPreview(d);
 }
-function normalizeW(W){
-  const eps=0.5; let out=[W[0]];
-  for(let i=1;i<W.length;i++){const a=out[out.length-1];
-    if(Math.abs(W[i].wx-a.wx)<eps && Math.abs(W[i].wy-a.wy)<eps) continue; out.push(W[i]);}
-  for(let ch=true;ch && out.length>2;){ch=false;
-    for(let i=1;i<out.length-1;i++){const a=out[i-1],b=out[i],c=out[i+1];
-      if((Math.abs(a.wx-b.wx)<eps&&Math.abs(b.wx-c.wx)<eps)||(Math.abs(a.wy-b.wy)<eps&&Math.abs(b.wy-c.wy)<eps)){
-        out.splice(i,1); ch=true; break;}}}
-  return out;
+function installSegmentSVG(svg,frame,interactive){
+  zoomer.innerHTML=svg;adaptStage();restoreSceneFrame(frame);
+  if(interactive){buildMap();paint(pinnedRange());wireHover();wireDrag();}
 }
-// world corner → SVG-user coords, anchored on route[0]'s exact pairing.
-function worldToUser(w,ref){const dx=w.wx-ref.wx,dy=w.wy-ref.wy;
-  return [ref.sx+(dx-dy)*C30, ref.sy+(dx+dy)*S30];}
-function routeToPathD(W,ref){
-  return W.map((w,i)=>{const u=worldToUser(w,ref);return (i?'L ':'M ')+u[0].toFixed(2)+','+u[1].toFixed(2);}).join(' ');
+function cancelSegmentDrag(){
+  const d=edgeDrag;if(!d||!d.segmentEdit)return;
+  d.cancelled=true;edgeDrag=null;
+  if(d.controller)d.controller.abort();
+  document.body.style.cursor='';
+  // The preview never changes source. Restore its original picture even when
+  // typing invalidated the gesture; the normal stale/render UI handles typing.
+  installSegmentSVG(d.originalSvg,d.frame,true);
 }
+function finishSegmentDrag(d){
+  if(!segmentDragCurrent(d)||!d.released||d.accepted!==d.version||!d.result)return;
+  const data=d.result;
+  if(data.yaml===d.source){cancelSegmentDrag();return;}
+  edgeDrag=null;document.body.style.cursor='';
+  pushUndo();srcEl.value=data.yaml;setDirty(srcEl.value!==ORIGINAL);
+  try{localStorage.setItem(DRAFTKEY,srcEl.value);}catch(_){}
+  updateModel(data);
+  // Commit exactly the accepted preview response, without another solve.
+  installSegmentSVG(data.svg,d.frame,true);markRendered();showIssues(data.issues||[]);
+}
+async function pumpSegmentPreview(d){
+  if(d.running)return;
+  d.running=true;
+  try{
+    while(segmentDragCurrent(d)&&d.accepted!==d.version){
+      const version=d.version,delta=d.desired;
+      d.controller=new AbortController();
+      const timeout=setTimeout(()=>d.controller.abort(),10000);
+      let data;
+      try{
+        const r=await fetch('/api/move?kind=edge&ci='+d.ci+'&segment='+d.seg.j+'&dwx='+delta[0]+'&dwy='+delta[1]+
+          '&format='+encodeURIComponent(LANG)+'&projection='+encodeURIComponent(d.projection),
+          {method:'POST',body:d.source,signal:d.controller.signal});
+        if(!r.ok)throw Error(await r.text());
+        data=await r.json();
+        if(!data.svg||typeof data.yaml!=='string')throw Error((data.issues||[]).map(i=>i.message).join('; ')||L('render_failed'));
+      }catch(error){
+        if(segmentDragCurrent(d)&&version===d.version){cancelSegmentDrag();showIssues([{severity:'error',path:'connector',message:String(error)}]);}
+        if(!segmentDragCurrent(d))return;
+        continue;
+      }finally{clearTimeout(timeout);}
+      if(!segmentDragCurrent(d))return;
+      if(version!==d.version)continue; // coalesce, never display stale answers
+      d.result=data;d.accepted=version;
+      installSegmentSVG(data.svg,d.frame,false);
+    }
+    finishSegmentDrag(d);
+  }finally{d.running=false;}
+}
+
 // Live edge-follow: shift a path's FROM end (first coord pair) and/or TO end
 // (last pair) by (dx,dy) user units. Used while dragging a node so its docked
 // connector endpoints track it — the node translates rigidly by the same
@@ -729,8 +923,7 @@ const SNAP_STEP=40;   // one grid cell (world units)
 // delta to every id atomically in ONE round-trip (/api/move&ids=…), so the
 // batch is a single UNDO step and can never half-apply.
 async function commitMove(kind,key,dwx,dwy,dropX,dropY,wp,ids){
-  if(!serverOK) return;
-  pushUndo();
+  if(!serverOK) return false;
   const snapEl=document.getElementById('snap');
   const snap=(kind==='node' && snapEl && snapEl.checked) ? SNAP_STEP : 0;
   const multi=!!(ids&&ids.length>1);
@@ -740,44 +933,25 @@ async function commitMove(kind,key,dwx,dwy,dropX,dropY,wp,ids){
   try{
     const r=await fetch('/api/move?'+qp+'&dwx='+dwx+'&dwy='+dwy+'&snap='+snap+'&format='+encodeURIComponent(LANG)+projQS(),
       {method:'POST',body:srcEl.value});
-    if(!r.ok) return;
+    if(!r.ok) return false;
     const data=await r.json();
+    if(!data.svg||typeof data.yaml!=='string'){showIssues(data.issues||[]);return false;}
+    const frame=captureSceneFrame();
+    // Record only accepted edits: a rejected request must preserve redo and
+    // must not evict the oldest entry from a full undo history.
+    pushUndo();
     if(typeof data.yaml==='string'){ srcEl.value=data.yaml; setDirty(srcEl.value!==ORIGINAL);
       try{localStorage.setItem(DRAFTKEY,srcEl.value);}catch(_){} }
     if(data.svg){
       updateModel(data);
-      // A snapped node lands on the grid, NOT under the cursor — so (like an
-      // edge bend) hold the scene still on a stable OTHER node instead of
-      // drop-anchoring to the release point. Record it before the re-render.
-      // A group move holds the scene too: no single node "follows the cursor".
-      const holdScene = kind==='edge' || snap>0 || multi;
-      let anchor=null;
-      if(holdScene){
-        const movedSet=new Set(multi?ids:[]);
-        const ref=[...zoomer.querySelectorAll('g[data-part-id]')].find(g=>{
-          const gid=g.getAttribute('data-part-id');
-          return gid!==key && !movedSet.has(gid.replace(/~\d+$/,''));
-        }) || zoomer.querySelector('g[data-part-id]');
-        if(ref){const c=ref.getBoundingClientRect();
-          anchor={id:ref.getAttribute('data-part-id'),x:c.x+c.width/2,y:c.y+c.height/2};}
-      }
       zoomer.innerHTML=data.svg;
       buildMap(); paint(pinnedRange());
       wireHover(); wireDrag(); adaptStage(); markRendered();
-      if(!holdScene && kind==='node' && dropX!=null){
-        // free drag: pan so the moved node sits exactly under the cursor.
-        const g=zoomer.querySelector('g[data-part-id="'+(window.CSS&&CSS.escape?CSS.escape(key):key)+'"]');
-        if(g){const c=g.getBoundingClientRect();
-          panX+=dropX-(c.x+c.width/2); panY+=dropY-(c.y+c.height/2); apply();}
-      }else if(anchor){
-        // hold the scene still: return the reference node to where it sat.
-        const ref=zoomer.querySelector('g[data-part-id="'+(window.CSS&&CSS.escape?CSS.escape(anchor.id):anchor.id)+'"]');
-        if(ref){const c=ref.getBoundingClientRect();
-          panX+=anchor.x-(c.x+c.width/2); panY+=anchor.y-(c.y+c.height/2); apply();}
-      }
+      restoreSceneFrame(frame);
     }
     showIssues(data.issues||[]);
-  }catch(_){}
+    return true;
+  }catch(_){return false;}
 }
 /* ── right-click → context menu → "Edit details" detail editor ──────── */
 const ctxmenu=document.getElementById('ctxmenu');
@@ -882,12 +1056,13 @@ function inEditable(){
 let undoStack=[], redoStack=[];
 function pushUndo(){ undoStack.push(srcEl.value); if(undoStack.length>100) undoStack.shift(); redoStack=[]; }
 function applyHistory(v){
+  cancelSegmentDrag();
   srcEl.value=v; setDirty(v!==ORIGINAL);
   try{ v===ORIGINAL?localStorage.removeItem(DRAFTKEY):localStorage.setItem(DRAFTKEY,v); }catch(_){}
   buildMap(); paint(pinnedRange()); if(serverOK) rerender();
 }
-function undo(){ if(!undoStack.length) return; redoStack.push(srcEl.value); applyHistory(undoStack.pop()); }
-function redo(){ if(!redoStack.length) return; undoStack.push(srcEl.value); applyHistory(redoStack.pop()); }
+function undo(){ cancelSegmentDrag();if(!undoStack.length) return; redoStack.push(srcEl.value); applyHistory(undoStack.pop()); }
+function redo(){ cancelSegmentDrag();if(!redoStack.length) return; undoStack.push(srcEl.value); applyHistory(redoStack.pop()); }
 function qpFor(t){
   if(t.kind==='node') return 'kind=node&id='+encodeURIComponent(t.key);
   if(t.kind==='edge') return 'kind=edge&ci='+t.key;
@@ -1330,6 +1505,7 @@ async function applyDetail(){
   }catch(_){}
 }
 function wireDrag(){
+  zoomer.querySelectorAll('path[data-edge-hit]').forEach(p=>p.remove());
   // Attach unconditionally — probe() may not have resolved at first
   // paint; commitMove() guards on serverOK at drop time instead.
   zoomer.querySelectorAll('g[data-part-id]').forEach(g=>{
@@ -1358,19 +1534,19 @@ function wireDrag(){
       // whole selection by the same delta (committed server-side as one
       // atomic move-multi op → one undo step). Every selected <g> live-follows.
       const group=(selection.size>1&&selection.has(did))?[...selection]:null;
-      const set=new Set(group||[did]);
+      const set=dragMemberIds(window.interactionModel,group||[did]);
       const els=[];
-      if(group) zoomer.querySelectorAll('g[data-part-id]').forEach(el=>{
+      zoomer.querySelectorAll('g[data-part-id]').forEach(el=>{
         if(set.has(baseId(el))) els.push({el,base:el.getAttribute('transform')||''});
       });
       // connectors docked to any dragged node, so they can live-follow the
       // drag (an edge with BOTH ends in the set rides along rigidly)
       const edges=[];
-      zoomer.querySelectorAll('path[data-connector]').forEach(p=>{
-        const mf=set.has(p.getAttribute('data-from')), mt=set.has(p.getAttribute('data-to'));
+      zoomer.querySelectorAll('path[data-connector],path[data-edge-hit]').forEach(p=>{
+        const mf=set.has((p.getAttribute('data-from')||'').replace(/~\d+$/,'')), mt=set.has((p.getAttribute('data-to')||'').replace(/~\d+$/,''));
         if(mf||mt) edges.push({el:p,mf,mt,baseD:p.getAttribute('d')});
       });
-      nodeDrag={el:g,id:did,ids:group,els:group?els:null,x:e.clientX,y:e.clientY,base:g.getAttribute('transform')||'',edges};
+      nodeDrag={el:g,id:did,ids:group,els,x:e.clientX,y:e.clientY,base:g.getAttribute('transform')||'',edges};
     });
     g.addEventListener('contextmenu',e=>{
       e.preventDefault(); e.stopPropagation();
@@ -1384,8 +1560,8 @@ function wireDrag(){
     });
   });
   zoomer.querySelectorAll('path[data-connector]').forEach(p=>{
-    // Widen the pointer-events hit area so thin lines are easy to hover.
-    p.setAttribute('stroke-width', Math.max(parseFloat(p.getAttribute('stroke-width')||'1.4'),3));
+    // Keep the authored stroke width; visible segment handles enlarge the
+    // editing target without changing the drawing.
     // Initial cursor — updated dynamically on mousemove below.
     p.style.cursor='grab';
     p.addEventListener('contextmenu',e=>{
@@ -1401,26 +1577,45 @@ function wireDrag(){
     // world-Y segment (!axisIsX) drags in world-X → screen direction ↖↘ (nwse-resize)
     function refreshEdgeCursor(cx,cy){
       if(nodeDrag||edgeDrag) return;
-      const route=parseRoute(p); if(!route||route.length<2){p.style.cursor='grab';return;}
-      const seg=nearestSegment(p,route,cx,cy);
-      p.style.cursor=seg.axisIsX?'nesw-resize':'nwse-resize';
+      const seg=nearestEditableSegment(p,cx,cy);
+      p.style.cursor=seg?(seg.axis===2?'move':seg.axis===0?'nesw-resize':'nwse-resize'):(p.hasAttribute('data-route')?'not-allowed':'grab');
     }
     p.addEventListener('mouseenter',e=>{ refreshEdgeCursor(e.clientX,e.clientY); showSegHandles(p); });
     p.addEventListener('mousemove',e=>{ refreshEdgeCursor(e.clientX,e.clientY); });
-    p.addEventListener('mouseleave',()=>{ if(!edgeDrag) removeSegHandles(p); });
+    p.addEventListener('mouseleave',e=>{if(!edgeDrag&&!(e.relatedTarget&&e.relatedTarget.getAttribute&&e.relatedTarget.getAttribute('data-seg-handle')===p.getAttribute('data-connector')))removeSegHandles(p);});
     p.addEventListener('mousedown',e=>{
       if(e.button!==0) return;   // left-button drags only; right-click = context menu
       e.preventDefault();
       e.stopPropagation();
-      p.style.cursor='grabbing';
-      document.body.style.cursor='grabbing';
-      p.classList.add('dragging');
-      removeSegHandles(p);
-      const route=parseRoute(p);
-      const seg=route?nearestSegment(p,route,e.clientX,e.clientY):null;
+      if(nodeDrag||edgeDrag)return;
+      const seg=nearestEditableSegment(p,e.clientX,e.clientY);
+      if(seg){beginSegmentDrag(p,seg,e);return;}
+      // Orthogonal paths require unambiguous 3-D provenance. Never fall back
+      // to the old XY-only bend edit when that information is unavailable.
+      if(p.hasAttribute('data-route'))return;
+      p.style.cursor='grabbing';document.body.style.cursor='grabbing';p.classList.add('dragging');
       edgeDrag={el:p,ci:p.getAttribute('data-connector'),x:e.clientX,y:e.clientY,
-        base:p.getAttribute('transform')||'',baseD:p.getAttribute('d'),route,seg,wp:null};
+        base:p.getAttribute('transform')||'',baseD:p.getAttribute('d')};
     });
+    // Invisible hit corridor in the path's own painter layer. It does not
+    // thicken the drawing or place hit targets above later-painted nodes.
+    const hit=p.cloneNode(false);
+    hit.removeAttribute('data-connector');hit.removeAttribute('data-route');hit.removeAttribute('class');hit.removeAttribute('id');
+    hit.setAttribute('data-edge-hit',p.getAttribute('data-connector'));
+    if(p.getAttribute('data-hit-clip'))hit.setAttribute('clip-path',p.getAttribute('data-hit-clip'));
+    hit.setAttribute('stroke','transparent');hit.setAttribute('stroke-width','10');
+    hit.setAttribute('vector-effect','non-scaling-stroke');hit.setAttribute('pointer-events','stroke');hit.setAttribute('aria-hidden','true');
+    for(const type of ['mouseenter','mouseleave','mousemove','mousedown','click','dblclick','contextmenu']){
+      hit.addEventListener(type,e=>{
+        if(type==='mouseenter')p.classList.add('edge-hover');
+        if(type==='mouseleave')p.classList.remove('edge-hover');
+        e.stopPropagation();if(type==='mousedown'||type==='contextmenu')e.preventDefault();
+        p.dispatchEvent(new MouseEvent(type,{clientX:e.clientX,clientY:e.clientY,button:e.button,buttons:e.buttons,
+          shiftKey:e.shiftKey,altKey:e.altKey,ctrlKey:e.ctrlKey,metaKey:e.metaKey,relatedTarget:e.relatedTarget}));
+        hit.style.cursor=p.style.cursor;
+      });
+    }
+    p.after(hit);
   });
   // every re-render funnels through wireDrag — re-apply (and prune) the
   // multi-selection highlight onto the freshly replaced SVG elements.
@@ -1428,31 +1623,32 @@ function wireDrag(){
 }
 
 // showSegHandles / removeSegHandles: place small circle affordances at each
-// segment midpoint to make it obvious every segment is independently draggable.
-// The circles are inserted into the same <svg> as the path so they share the
-// coordinate system (no CTM math needed — SVG-user coords from data-route).
+// mapped, uncovered segment midpoint. Native hit testing suppresses handles
+// under labels, strokes and bodies outside the coverage model.
 function showSegHandles(p){
   removeSegHandles(p);
-  const route=parseRoute(p); if(!route||route.length<2) return;
-  const svg=p.ownerSVGElement; if(!svg) return;
+  if(edgeDrag||nodeDrag)return;
+  const svg=p.ownerSVGElement,candidates=segmentHitCandidates(p);if(!svg||!candidates)return;
   const NS='http://www.w3.org/2000/svg';
   const accent=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#10aeb9';
-  for(let i=0;i<route.length-1;i++){
-    const a=route[i], b=route[i+1];
-    const mx=(a.sx+b.sx)/2, my=(a.sy+b.sy)/2;
+  for(const seg of candidates.editable){
+    const mx=(seg.sx+seg.ex)/2,my=(seg.sy+seg.ey)/2;
+    if(Math.hypot(seg.ax-seg.bx,seg.ay-seg.by)<14)continue;
+    const q={x:(seg.ax+seg.bx)/2,y:(seg.ay+seg.by)/2};
+    const chosen=nearestSegmentCandidate(candidates,q.x,q.y);
+    if(!chosen||chosen.segment!==seg.segment)continue;
+    const hit=document.elementFromPoint(q.x,q.y);
+    if(hit!==p&&(!hit||hit.getAttribute('data-edge-hit')!==p.getAttribute('data-connector')))continue; // native painter/overlay hit
     const c=document.createElementNS(NS,'circle');
-    c.setAttribute('cx', mx.toFixed(2));
-    c.setAttribute('cy', my.toFixed(2));
-    c.setAttribute('r','5');
-    c.setAttribute('fill', accent);
-    c.setAttribute('stroke','#fff');
-    c.setAttribute('stroke-width','1.5');
-    c.setAttribute('pointer-events','none');   // clicks fall through to path
-    c.setAttribute('data-seg-handle', p.getAttribute('data-connector')||'');
-    c.classList.add('seg-handle');
-    svg.appendChild(c);
-    // Animate in — next microtask so transition fires.
-    requestAnimationFrame(()=>c.classList.add('visible'));
+    c.setAttribute('cx',mx);c.setAttribute('cy',my);c.setAttribute('r','5');
+    c.setAttribute('fill',accent);c.setAttribute('stroke','#fff');c.setAttribute('stroke-width','1.5');
+    c.setAttribute('data-seg-handle',p.getAttribute('data-connector')||'');c.classList.add('seg-handle');
+    c.style.cursor=seg.axis===2?'move':seg.axis===0?'nesw-resize':'nwse-resize';
+    c.addEventListener('mouseleave',e=>{if(!edgeDrag&&e.relatedTarget!==p&&!(e.relatedTarget&&e.relatedTarget.getAttribute&&e.relatedTarget.getAttribute('data-edge-hit')===p.getAttribute('data-connector')))removeSegHandles(p);});
+    c.addEventListener('mousedown',e=>{if(e.button!==0)return;e.preventDefault();e.stopPropagation();beginSegmentDrag(p,seg,e);});
+    // A handle lives above the path. Retain it when the pointer leaves the
+    // path for this handle; ordinary canvas moves clear abandoned handles.
+    svg.appendChild(c);requestAnimationFrame(()=>c.classList.add('visible'));
   }
 }
 function removeSegHandles(p){
@@ -1475,19 +1671,16 @@ function liveTranslate(el, base, dx, dy){
     el.setAttribute('transform', ('translate('+dx+' '+dy+') ')+base);
   }
 }
+// CTM inversion includes viewBox fitting and CSS zoom/pan, not just the
+// Studio zoom slider. Preview and committed world deltas share this transform.
+function dragUserDelta(d,e){
+  const a=clientToSvgUser(d.x,d.y),b=clientToSvgUser(e.clientX,e.clientY);
+  return [b[0]-a[0],b[1]-a[1]];
+}
 window.addEventListener('mousemove',e=>{
   const d=nodeDrag||edgeDrag; if(!d) return;
-  if(edgeDrag && d.route && d.seg){
-    // Per-segment preview: move ONLY the grabbed segment, rebuilt from world
-    // corners so the docked endpoints stay put and the line stays iso-clean.
-    const wd=screenToWorldDelta((e.clientX-d.x)/scale,(e.clientY-d.y)/scale);
-    const delta=d.seg.axisIsX?wd[1]:wd[0];
-    const edited=normalizeW(editSegment(d.route,d.seg.j,d.seg.axisIsX,delta));
-    d.el.setAttribute('d', routeToPathD(edited,d.route[0]));
-    d.wp=edited;
-    return;
-  }
-  const dx=(e.clientX-d.x)/scale, dy=(e.clientY-d.y)/scale;
+  if(d.segmentEdit){if(!d.released)requestSegmentPreview(d,e,false);return;}
+  const [dx,dy]=dragUserDelta(d,e);
   if(nodeDrag && d.els) d.els.forEach(n=>liveTranslate(n.el, n.base, dx, dy)); // group: all selected ride
   else liveTranslate(d.el, d.base, dx, dy);
   // node drag: docked connector endpoints track the node in real time
@@ -1512,6 +1705,7 @@ window.addEventListener('mouseup',e=>{
   const d=nodeDrag||edgeDrag, kind=nodeDrag?'node':(edgeDrag?'edge':null);
   highlightDropTarget(null);   // clear the drop-target glow regardless of outcome
   if(!kind) return;
+  if(d.segmentEdit){requestSegmentPreview(d,e,true);return;}
   nodeDrag=null; edgeDrag=null;
   // restore the pre-drag transform; commit re-renders the SVG fresh
   if(d.els) d.els.forEach(n=>n.el.setAttribute('transform', n.base));
@@ -1522,18 +1716,14 @@ window.addEventListener('mouseup',e=>{
   if(d.edges) d.edges.forEach(ed=>ed.el.setAttribute('d', ed.baseD));
   d.el.classList.remove('dragging'); d.el.style.cursor=(kind==='edge'?'grab':'move'); document.body.style.cursor='';
   if(kind==='edge') removeSegHandles(d.el);
-  const wd=screenToWorldDelta((e.clientX-d.x)/scale,(e.clientY-d.y)/scale);
+  const wd=screenToWorldDelta(...dragUserDelta(d,e));
   if(Math.abs(wd[0])<=2 && Math.abs(wd[1])<=2) return;   // below drag threshold
   // A completed drag's trailing click lands on the re-rendered canvas (the
   // node under the cursor was just replaced), which would clearSelection()
   // and force a re-marquee before every subsequent group move. Same guard
   // the marquee uses: swallow exactly one trailing click.
   marqueeJustEnded=true;
-  if(kind==='edge' && d.wp){
-    // interior corners (drop the docked endpoints) become the waypoint list
-    const interior=d.wp.slice(1,d.wp.length-1).map(w=>[Math.round(w.wx),Math.round(w.wy)]);
-    commitMove('edge', d.ci, 0, 0, e.clientX, e.clientY, interior);
-  }else if(kind==='node' && d.ids){
+  if(kind==='node' && d.ids){
     // Group move: ONE atomic server round-trip moves the whole selection by
     // the same delta (relative positions preserved) = ONE undo step. No
     // reparent pass — every node keeps its current container.
@@ -1544,7 +1734,7 @@ window.addEventListener('mouseup',e=>{
     // when the parent is unchanged, so an in-group nudge keeps its offset.
     const target=containerUnder(e.clientX, e.clientY, d.id);
     commitMove(kind, d.id, Math.round(wd[0]), Math.round(wd[1]), e.clientX, e.clientY)
-      .then(()=>reparentNode(d.id, target||''));
+      .then(ok=>{if(ok) return reparentNode(d.id, target||'', false);});
   }else{
     commitMove(kind, d.ci, Math.round(wd[0]), Math.round(wd[1]), e.clientX, e.clientY);
   }
@@ -1592,12 +1782,13 @@ function containerUnder(cx, cy, exceptId){
       if(m && m.a){
         const sceneTx = parseFloat(svg.dataset.sceneTx||'0');
         const sceneTy = parseFloat(svg.dataset.sceneTy||'0');
-        const dsx = (cx - m.e) / m.a - sceneTx;
-        const dsy = (cy - m.f) / m.d - sceneTy;
+        const [ux,uy]=clientToSvgUser(cx,cy);
+        const dsx=ux-sceneTx, dsy=uy-sceneTy;
         const [curWx,curWy] = screenToWorldDelta(dsx, dsy);
         let bestId=null, bestArea=Infinity;
+        const moving=dragMemberIds(window.interactionModel,[exceptId]);
         for(const pm of window.interactionModel){
-          if(!pm.container||pm.id===exceptId) continue;
+          if(!pm.container||moving.has(pm.id)) continue;
           if(curWx>=pm.x&&curWx<=pm.x+pm.w&&curWy>=pm.y&&curWy<=pm.y+pm.d){
             const area=pm.w*pm.d;
             if(area<bestArea){bestArea=area;bestId=pm.id;}
@@ -1617,16 +1808,20 @@ function containerUnder(cx, cy, exceptId){
   }
   return null;
 }
-async function reparentNode(id, target){
+async function reparentNode(id, target, recordUndo=true){
   if(!serverOK) return;
-  pushUndo();
+  const pm=window.interactionModel&&window.interactionModel.find(p=>p.id===id);
+  if(pm&&(pm.parentId||'')===target) return;
+  const frame=captureSceneFrame();
   try{
     const r=await fetch('/api/op?op=reparent&id='+encodeURIComponent(id)+'&target='+encodeURIComponent(target)+'&format='+encodeURIComponent(LANG)+projQS(),{method:'POST',body:srcEl.value});
-    if(!r.ok){ redoStack=[]; undoStack.pop(); return; }   // 422 (e.g. into own child) → drop the no-op undo entry
+    if(!r.ok) return;
     const data=await r.json();
+    if(!data.svg||typeof data.yaml!=='string') return;
+    if(recordUndo) pushUndo();
     if(typeof data.yaml==='string'){ srcEl.value=data.yaml; setDirty(srcEl.value!==ORIGINAL); try{localStorage.setItem(DRAFTKEY,srcEl.value);}catch(_){} }
-    if(data.svg){ updateModel(data); zoomer.innerHTML=data.svg; buildMap(); paint(pinnedRange()); wireHover(); wireDrag(); adaptStage(); markRendered(); }
-  }catch(_){ undoStack.pop(); }
+    if(data.svg){ updateModel(data); zoomer.innerHTML=data.svg; buildMap(); paint(pinnedRange()); wireHover(); wireDrag(); adaptStage(); markRendered(); restoreSceneFrame(frame); }
+  }catch(_){}
 }
 
 /* reverse mapping: caret inside a part's block lights the node up */
@@ -1674,6 +1869,7 @@ function fitView(){
 }
 viewport.addEventListener('wheel',e=>{
   e.preventDefault();
+  if(edgeDrag&&edgeDrag.segmentEdit)return;
   const f=e.deltaY<0?1.1:0.9, r=viewport.getBoundingClientRect();
   const mx=e.clientX-r.left, my=e.clientY-r.top;
   panX=mx-(mx-panX)*f; panY=my-(my-panY)*f;
@@ -1681,7 +1877,7 @@ viewport.addEventListener('wheel',e=>{
 },{passive:false});
 /* ── empty-canvas gestures ─────────────────────────────────────────
    plain left-drag  = marquee box selection (semi-transparent frame; a node
-                      is hit when its projected model AABB intersects the box;
+                      is hit when its projected body/content region intersects the box;
                       hold shift to ADD to the current selection)
    alt/middle-drag  = pan (the old plain-drag pan, kept on a modifier)
    plain click      = clear pin + selection · double-click = reset view
@@ -1691,7 +1887,7 @@ let drag=null, marquee=null, marqueeJustEnded=false;
 // gesture that armed it — but that click can be eaten by a node handler's
 // stopPropagation and never reach the viewport. A fresh mousedown means a
 // NEW user gesture, so any stale guard must die with it.
-window.addEventListener('mousedown',()=>{marqueeJustEnded=false;},true);
+window.addEventListener('mousedown',e=>{if(edgeDrag&&edgeDrag.segmentEdit){e.preventDefault();e.stopImmediatePropagation();return;}marqueeJustEnded=false;},true);
 viewport.addEventListener('mousedown',e=>{
   if(e.button===0 && !e.altKey){
     marquee={x0:e.clientX,y0:e.clientY,el:null,rect:null,add:e.shiftKey};
@@ -1858,9 +2054,10 @@ async function probe(){
 // View mode: 'iso' (2.5D, default) or 'top' (flat plan). It's a PREVIEW
 // override sent as ?projection= on every render/edit round-trip — the source
 // the editor holds is never rewritten, so toggling back is lossless.
-let VIEWMODE='iso';
-function projQS(){ return VIEWMODE==='top' ? '&projection=top' : ''; }
+let VIEWMODE=isTopView()?'top':'iso',renderVersion=0;
+function projQS(){ return '&projection='+VIEWMODE; }
 function toggleView(){
+  cancelSegmentDrag();
   VIEWMODE = VIEWMODE==='top' ? 'iso' : 'top';
   const b=document.getElementById('viewtoggle');
   if(b){ b.textContent = VIEWMODE==='top' ? L('view_plan') : L('view_iso'); b.classList.toggle('on', VIEWMODE==='top'); }
@@ -1868,11 +2065,14 @@ function toggleView(){
 }
 async function rerender(){
   if(!serverOK) return;
+  cancelSegmentDrag();
+  const source=srcEl.value,projection=VIEWMODE,version=++renderVersion;
   renderBtn.textContent=L('rendering');
   setStatus('',L('rendering'),'');
   try{
-    const r=await fetch('/api/render?format='+encodeURIComponent(LANG)+projQS(),{method:'POST',body:srcEl.value});
+    const r=await fetch('/api/render?format='+encodeURIComponent(LANG)+projQS(),{method:'POST',body:source});
     const data=await r.json();
+    if(version!==renderVersion||source!==srcEl.value||projection!==VIEWMODE)return;
     showIssues(data.issues||[]);
     if(data.svg){
       updateModel(data);
@@ -1902,6 +2102,7 @@ function showIssues(list){
   });
 }
 srcEl.addEventListener('input',()=>{
+  cancelSegmentDrag();
   buildMap(); paint(null);
   lastTypeTime=Date.now();   // debounce autosave while keystrokes are in flight
   const edited=srcEl.value!==ORIGINAL;
@@ -1963,6 +2164,7 @@ window.addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&e.key==='0'){e.preventDefault();fitView();return;}
   if((e.metaKey||e.ctrlKey)&&(e.key==='='||e.key==='+')){e.preventDefault();zoomBy(1.25);return;}
   if((e.metaKey||e.ctrlKey)&&e.key==='-'){e.preventDefault();zoomBy(0.8);return;}
+  if(e.key==='Escape'&&edgeDrag&&edgeDrag.segmentEdit){e.preventDefault();cancelSegmentDrag();return;}
   if(e.key==='Escape'){document.getElementById('help').hidden=true;hideCtx();closeDetail();clearSelection();return;}
   // Delete / Backspace removes the multi-selection (one atomic batch = one
   // undo step) when there is one, else the pinned object — but only when not
@@ -2085,6 +2287,8 @@ async function copyPath(){
 function currentSVG(){
   const el=zoomer.querySelector('svg'); if(!el) return '';
   const c=el.cloneNode(true);
+  c.querySelectorAll('[data-edge-hit],[data-seg-handle]').forEach(el=>el.remove());
+  c.querySelectorAll('path[data-connector]').forEach(p=>{p.classList.remove('edge-hover');p.style.removeProperty('cursor');});
   c.querySelectorAll('[data-part-id]').forEach(g=>{
     g.classList.remove('hi');
     if(!g.getAttribute('class')) g.removeAttribute('class');

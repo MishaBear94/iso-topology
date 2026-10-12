@@ -3,7 +3,10 @@
 // `group` (nested parts) and `stack` (vertical replication).
 package isotopo
 
-import "fmt"
+import (
+	"fmt"
+	"github.com/MarkovWangRR/iso-topology/iso25d"
+)
 
 type partInfo struct {
 	id                  string
@@ -22,6 +25,7 @@ type partInfo struct {
 	labelFontSize float64
 	sides         int // prism family: geom.sides
 	isSubstrate   bool
+	body          *iso25d.ProjectedBody // resolved from the actual renderer options
 }
 
 // renderComposite walks parts and delegates to iso25d.RenderComposite,
@@ -30,13 +34,23 @@ type partInfo struct {
 // v2 — also lowers `group` shapes (translucent substrate + nested parts)
 // and `stack` (vertical replication), then paints the canvas backdrop
 
-func lowerCompositeParts(in []*CompositePart, offX, offY, offZ float64) []*CompositePart {
+func lowerCompositeParts(in []*CompositePart, offX, offY, offZ float64, grid ...float64) []*CompositePart {
+	gridStep := 0.0
+	if len(grid) > 0 {
+		gridStep = grid[0]
+	}
 	out := make([]*CompositePart, 0, len(in))
 	for _, p := range in {
 		if p == nil {
 			continue
 		}
-		base := translatePart(p, offX, offY, offZ)
+		// Clone even at the scene origin: lowering may mark a platform or
+		// resolve a caption, neither of which belongs on the author's part.
+		cp := *p
+		x, y, z := partLocalOffset(p, gridStep)
+		cp.Offset = &WorldPoint{WX: x + offX, WY: y + offY, WZ: z + offZ}
+		cp.Position = nil
+		base := &cp
 		if isContainerShape(p.Shape) {
 			// Substrate first (z-ordered behind children).
 			sub := groupSubstrate(base)
@@ -56,12 +70,9 @@ func lowerCompositeParts(in []*CompositePart, offX, offY, offZ float64) []*Compo
 			// absolute pos as the new origin, so seed the recursion with
 			// base.Offset directly — not offX + base.Offset (that would
 			// double-count when we recurse beyond one level of nesting).
-			childOffX, childOffY, childOffZ := 0.0, 0.0, offZ+groupSubstrateHeight(base)
-			if base.Offset != nil {
-				childOffX = base.Offset.WX
-				childOffY = base.Offset.WY
-			}
-			out = append(out, lowerCompositeParts(p.Parts, childOffX, childOffY, childOffZ)...)
+			childOffX, childOffY := base.Offset.WX, base.Offset.WY
+			childOffZ := base.Offset.WZ + groupSubstrateHeight(base)
+			out = append(out, lowerCompositeParts(p.Parts, childOffX, childOffY, childOffZ, gridStep)...)
 			if groupLabel != "" && len(p.Parts) > 0 {
 				out = append(out, groupLabelPart(sub, groupLabel))
 			}
@@ -133,6 +144,24 @@ func expandStack(p *CompositePart, s *Stack) []*CompositePart {
 func groupSubstrate(p *CompositePart) *CompositePart {
 	boundary := p.Shape == "boundary"
 	cp := *p
+	// Only mutate owned copies when supplying slab defaults. These pointers
+	// otherwise alias both p and the original document's style/geometry.
+	if cp.Geom != nil {
+		g := *cp.Geom
+		cp.Geom = &g
+	}
+	if cp.Style != nil {
+		s := *cp.Style
+		cp.Style = &s
+		if s.Stroke != nil {
+			stroke := *s.Stroke
+			s.Stroke = &stroke
+		}
+		if s.Effects != nil {
+			effects := *s.Effects
+			s.Effects = &effects
+		}
+	}
 	cp.Shape = "rectangle"
 	cp.isSubstrate = true
 	cp.Parts = nil
@@ -202,8 +231,8 @@ func groupSubstrate(p *CompositePart) *CompositePart {
 // band) even when the author set no cornerRadius.
 const defaultGroupCornerRadius = 14.0
 
-// defaultGroupSubstrateH is the slab thickness a group/boundary gets when its
-// geom.h is unset. Children sit ON the slab, so the layout solver (partHeight),
+// defaultGroupSubstrateH is the slab thickness a group gets when geom.h is
+// unset (an outline-only boundary uses 2). Children sit ON the slab, so partHeight,
 // the substrate lowering here, and the reparent base-z math (editops) all read
 // this same value — keep them in lockstep.
 const defaultGroupSubstrateH = 40.0
@@ -211,6 +240,9 @@ const defaultGroupSubstrateH = 40.0
 func groupSubstrateHeight(p *CompositePart) float64 {
 	if p != nil && p.Geom != nil && p.Geom.H > 0 {
 		return p.Geom.H
+	}
+	if p != nil && p.Shape == "boundary" {
+		return 2
 	}
 	return defaultGroupSubstrateH
 }

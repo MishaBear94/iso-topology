@@ -254,6 +254,10 @@ func convexHull(pts [][2]float64) [][2]float64 {
 // left/right semantics), and Projected face fills pin to each wall's
 // true iso plane via per-side matrices.
 func RenderIsoPrism(o IsoBoxOpts, sides int) string {
+	return renderIsoPrism(o, sides, nil)
+}
+
+func renderIsoPrism(o IsoBoxOpts, sides int, fonts fontResources) string {
 	g := computeBoxGeom(o.Width, o.Depth, o.Height, o.Margin)
 	params := map[string]any{"sides": sides}
 	var prov PrismShapeProvider
@@ -380,6 +384,7 @@ func RenderIsoPrism(o IsoBoxOpts, sides int) string {
 		ox+g.Tx, oy+g.Ty, cr.W, cr.H,
 		o.Label, o.LabelLines, o.Icon, o.IconScale, o.IconAnchor, o.IconOffX, o.IconOffY,
 		o.FontFamily, o.FontSize, o.FontWeight, o.FontColor,
+		fonts,
 	)
 
 	if o.OutlineColor != "" && o.OutlineWidth > 0 {

@@ -15,8 +15,8 @@ package isotopo
 
 import "strconv"
 
-// ConnectorRoute is the real rendered geometry of one composite connector,
-// captured in-memory at render time.
+// ConnectorRoute records the editable pre-clip route and the final submitted
+// drawing of one composite connector in the same render pass.
 //
 // World holds the route's ground-plane corners (wx, wy) in the same world
 // frame as the plan footprints, source→target, PRE-clip — for orthogonal
@@ -35,21 +35,54 @@ type ConnectorRoute struct {
 	Routing string       `json:"routing"` // effective kind: orthogonal | orthogonal2 | bezier | straight
 	World   [][2]float64 `json:"world"`   // world (wx, wy) route, source→target, pre-clip
 	Screen  [][2]float64 `json:"screen"`  // screen-user route, parallel to World
+	// World3D is parallel to the pre-clip tracks above. Quadratics retain the
+	// existing linear-height lifting convention; it is not a solved 3-D cable.
+	World3D [][3]float64 `json:"world3d"`
+	// Drawing is the submitted SVG geometry AFTER trimming, clipping and
+	// coincident-path reuse, at the emitter's precision. It must not be used as
+	// a replacement for the authored/editable pre-clip World track.
+	Drawing *ConnectorDrawing `json:"drawing"`
 }
 
 // routeCollector accumulates ConnectorRoutes while injectCompositeConnectors
 // runs. A nil collector disables collection entirely (the default render
 // path); a non-nil one only observes — it must never influence the SVG.
 type routeCollector struct {
-	routes []ConnectorRoute
+	labelConflicts bool // detailed diagnostics requested by report/candidate gate
+	routes         []ConnectorRoute
+	paint          []connectorPaintPart
+	// Optional output owned by SceneResult. Legacy route-only collection does
+	// not allocate or measure screen-label records.
+	screenLabels *[]ScreenLabel
+	// Actual committed SVG body order, indexed by paint rank. GeometryIndex
+	// remains the original data-part identity; DOM order drives native hits.
+	partPaint []submittedPartPaint
+	// Historical planar metrics consume only World/Screen. Avoid calculating
+	// body coverage for every search candidate until those consumers migrate.
+	preClipOnly bool
+	// Producer-owned byte locations within connector-overlay. They distinguish
+	// identical arrow polygons belonging to different edges, without a screen
+	// geometry search or extra public SVG attributes.
+	arrowFragments []connectorArrowFragment
+}
+
+type submittedPartPaint struct {
+	InstanceID    string `json:"instance_id"`
+	GeometryIndex int    `json:"geometry_index"`
+	PaintOrder    int    `json:"paint_order"`
+}
+
+type connectorArrowFragment struct {
+	index, offset int
+	markup        string
 }
 
 // add records one connector's route. Routes with fewer than two points carry
 // no geometry and are skipped — mirroring the regex path, which only ever saw
 // connectors whose data-route held at least two corners.
-func (rc *routeCollector) add(index int, from, to, routing string, world, screen [][2]float64) {
+func (rc *routeCollector) add(index int, from, to, routing string, world, screen [][2]float64) *ConnectorRoute {
 	if rc == nil || len(world) < 2 || len(world) != len(screen) {
-		return
+		return nil
 	}
 	rc.routes = append(rc.routes, ConnectorRoute{
 		Index:   index,
@@ -59,6 +92,7 @@ func (rc *routeCollector) add(index int, from, to, routing string, world, screen
 		World:   append([][2]float64(nil), world...),
 		Screen:  append([][2]float64(nil), screen...),
 	})
+	return &rc.routes[len(rc.routes)-1]
 }
 
 // isoUnproject inverts projectIso at a known world z: given a screen-user
@@ -73,11 +107,9 @@ func isoUnproject(sx, sy, wz float64) (wx, wy float64) {
 	return (a + b) / 2, (b - a) / 2
 }
 
-// bezierRouteSamples is the fixed sample count for a bezier connector's
-// collected polyline. 16 segments track the drawn quadratic to well under a
-// world unit at diagram scale — far finer than any scorecard threshold —
-// while keeping the evaluator's crossing checks cheap. Constant, so equal
-// input keeps producing byte-equal reports.
+// bezierRouteSamples preserves the historical pre-clip scorecard's sample
+// count. Its error is scale-dependent; it is NOT an exact final curve or a
+// visibility oracle. Drawing retains the emitted quadratic's actual controls.
 const bezierRouteSamples = 16
 
 // sampleBezierRoute converts a drawn bezier connector into parallel

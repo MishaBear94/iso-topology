@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/MarkovWangRR/iso-topology/yamledit"
@@ -24,6 +25,8 @@ import (
 //
 //	move       — Target node|edge + DWX/DWY world drag delta (+ Snap grid step,
 //	             or Waypoints for a drawio-style per-segment edge edit)
+//	move-segment — CI + Segment (pre-clip route index) + DWX/DWY: move an
+//	             orthogonal leg, preserving world Z and docked endpoints.
 //	move-multi — IDs + DWX/DWY: apply the SAME world delta to every listed node
 //	             in ONE text surgery (Studio group-move). Atomic: any id that
 //	             fails aborts the whole op and the source is returned unchanged.
@@ -34,12 +37,13 @@ import (
 //	duplicate  — Target node: clone it with a fresh id, offset down-right
 type EditOp struct {
 	Kind      string            `json:"kind"`
-	Target    string            `json:"target,omitempty"` // node | edge | canvas
-	ID        string            `json:"id,omitempty"`     // part id
-	IDs       []string          `json:"ids,omitempty"`    // move-multi / delete-multi: batch part ids
-	CI        int               `json:"ci,omitempty"`     // connector index
-	Fields    map[string]string `json:"fields,omitempty"` // set-field: path → value
-	DWX       float64           `json:"dwx,omitempty"`    // move: world drag delta
+	Target    string            `json:"target,omitempty"`  // node | edge | canvas
+	ID        string            `json:"id,omitempty"`      // part id
+	IDs       []string          `json:"ids,omitempty"`     // move-multi / delete-multi: batch part ids
+	CI        int               `json:"ci,omitempty"`      // connector index
+	Segment   int               `json:"segment,omitempty"` // move-segment: pre-clip route segment
+	Fields    map[string]string `json:"fields,omitempty"`  // set-field: path → value
+	DWX       float64           `json:"dwx,omitempty"`     // move: world drag delta
 	DWY       float64           `json:"dwy,omitempty"`
 	Snap      float64           `json:"snap,omitempty"`      // move: grid step (0 = none)
 	Waypoints [][2]float64      `json:"waypoints,omitempty"` // edge move: interior corners
@@ -96,7 +100,7 @@ func ApplyOp(format string, src []byte, op EditOp) (newSrc []byte, svg string, i
 func ApplyOpText(format string, src []byte, op EditOp) ([]byte, error) {
 	out, err := applyOpText(format, src, op)
 	if err != nil {
-		return out, err
+		return src, err
 	}
 	// Universal safety net: a text-surgery op must NEVER return a document it
 	// made unparseable (the result is fed to the next edit in the chain, so a
@@ -125,6 +129,8 @@ func applyOpText(format string, src []byte, op EditOp) ([]byte, error) {
 		}
 	}
 	switch op.Kind {
+	case "move-segment":
+		return applyMoveSegment(format, src, op)
 	case "move":
 		return applyMove(format, src, op)
 	case "move-multi":
@@ -147,11 +153,10 @@ func applyOpText(format string, src []byte, op EditOp) ([]byte, error) {
 		// Validate both endpoints exist (mirrors set-field/delete) so we don't
 		// silently append a dangling connector that blanks the whole render.
 		if doc, derr := Parse(src); derr == nil {
-			if findPart(doc, edgeEndpointBase(from)) == nil {
-				return src, fmt.Errorf("add-edge: from %q not found", from)
-			}
-			if findPart(doc, edgeEndpointBase(to)) == nil {
-				return src, fmt.Errorf("add-edge: to %q not found", to)
+			for _, endpoint := range []struct{ ref, anchor string }{{from, op.Fields["fromAnchor"]}, {to, op.Fields["toAnchor"]}} {
+				if err := checkEditEndpoint(doc, endpoint.ref, endpoint.anchor); err != nil {
+					return src, err
+				}
 			}
 		}
 		out, ok := yamledit.AddConnector(string(src), from, to, op.Fields["fromAnchor"], op.Fields["toAnchor"])
@@ -199,7 +204,7 @@ func rerouteMovedConnectors(format string, src []byte, movedID string) []byte {
 	}
 	out := string(src)
 	for ci, c := range scene.Connectors {
-		if c == nil {
+		if c == nil || len(c.Waypoints3D) > 0 {
 			continue
 		}
 		fromID, toID := connectorTarget(c.From), connectorTarget(c.To)
@@ -503,6 +508,9 @@ func applyMove(format string, src []byte, op EditOp) ([]byte, error) {
 	s := string(src)
 	switch op.Target {
 	case "edge":
+		if scene := doc.Scene(); scene != nil && op.CI >= 0 && op.CI < len(scene.Connectors) && len(scene.Connectors[op.CI].Waypoints3D) > 0 && (scene.Connectors[op.CI].Routing == "orthogonal" || scene.Connectors[op.CI].Routing == "orthogonal2") {
+			return src, fmt.Errorf("move: this edge has a 3-D route; use move-segment or remove waypoints3d first")
+		}
 		// Per-segment waypoint edit (drawio-style) when supplied; else the
 		// legacy single-corner bend accumulated from the current value.
 		if len(op.Waypoints) > 0 {
@@ -564,6 +572,34 @@ func edgeEndpointBase(ref string) string {
 		id = id[:i]
 	}
 	return id
+}
+
+func checkEditEndpoint(doc *Document, ref, anchor string) error {
+	id := connectorTarget(ref)
+	p := findPart(doc, edgeEndpointBase(ref))
+	if p == nil {
+		return fmt.Errorf("add-edge: endpoint %q not found", ref)
+	}
+	if id != p.ID {
+		suffix := strings.TrimPrefix(id, p.ID+"~")
+		n, err := strconv.Atoi(suffix)
+		if err != nil || n < 1 || p.Stack == nil || n >= p.Stack.Count || strconv.Itoa(n) != suffix {
+			return fmt.Errorf("add-edge: instance %q not found", id)
+		}
+	}
+	if i := strings.IndexByte(ref, '.'); i >= 0 {
+		if anchor != "" {
+			return fmt.Errorf("add-edge: endpoint %q already specifies an anchor", ref)
+		}
+		anchor = ref[i+1:]
+	}
+	if anchor != "" && !contains(anchorNames, anchor) {
+		return fmt.Errorf("add-edge: unknown anchor %q", anchor)
+	}
+	if _, fixed := fixedPortSide(anchor); fixed && !hasPortBody(p.Shape) {
+		return fmt.Errorf("add-edge: %q has no body for a fixed contour port; use a legacy anchor", ref)
+	}
+	return nil
 }
 
 // isCleanID reports whether s is a usable part id: a non-empty run of letters,
@@ -776,9 +812,9 @@ func resolveLowered(doc *Document) map[string]*CompositePart {
 	if scene == nil {
 		return nil
 	}
-	applyLayout(scene, doc.Canvas)
+	scene = resolvedLayout(scene, doc.Canvas)
 	m := map[string]*CompositePart{}
-	for _, p := range lowerCompositeParts(scene.Parts, 0, 0, 0) {
+	for _, p := range lowerCompositeParts(scene.Parts, 0, 0, 0, scene.GridStep) {
 		if p != nil && p.ID != "" {
 			if _, exists := m[p.ID]; !exists {
 				m[p.ID] = p // first wins: the group substrate, not its label part
@@ -818,7 +854,8 @@ func childOrigin(doc *Document, lowered map[string]*CompositePart, src, targetID
 			}
 			if ox, oy, oz, ok := yamledit.ReadInlineOffset(src, yamledit.FindPartIDLine(src, c.ID)); ok {
 				wx, wy, wz := worldXYZ(cw)
-				return wx - ox, wy - oy, wz - oz
+				gx, gy := partGridOffset(c, doc.Scene().GridStep)
+				return wx - ox - gx, wy - oy - gy, wz - oz
 			}
 		}
 	}
@@ -829,15 +866,11 @@ func childOrigin(doc *Document, lowered map[string]*CompositePart, src, targetID
 		return 0, 0, 0
 	}
 	x, y, z = worldXYZ(tp)
-	authoredZ := 0.0
-	if op := findPart(doc, targetID); op != nil && op.Offset != nil {
-		authoredZ = op.Offset.WZ
-	}
 	slabH := defaultGroupSubstrateH
 	if tp.Geom != nil && tp.Geom.H > 0 {
 		slabH = tp.Geom.H
 	}
-	return x, y, z - authoredZ + slabH
+	return x, y, z + slabH
 }
 
 // applyReparent moves a node into another group (op.Target) or to the scene
@@ -930,7 +963,8 @@ func applyReparent(format string, src []byte, op EditOp) ([]byte, error) {
 				rcox, rcoy, rcoz := childOrigin(doc, lowered, string(src), parentOf(doc, ref))
 				out = yamledit.RemovePartKey(out, ref, "place")
 				if line := yamledit.FindPartIDLine(out, ref); line >= 0 {
-					if o2, ok2 := yamledit.UpsertInlineKey(out, line, "offset", rx-rcox, ry-rcoy, rz-rcoz); ok2 {
+					gx, gy := partGridOffset(findPart(doc, ref), doc.Scene().GridStep)
+					if o2, ok2 := yamledit.UpsertInlineKey(out, line, "offset", rx-rcox-gx, ry-rcoy-gy, rz-rcoz); ok2 {
 						out = o2
 					}
 				}
@@ -939,7 +973,8 @@ func applyReparent(format string, src []byte, op EditOp) ([]byte, error) {
 			// Write the moved node's preserving offset LAST so it wins over any
 			// stale value a freeze pass may have written for it.
 			if line := yamledit.FindPartIDLine(out, op.ID); line >= 0 {
-				if o2, ok2 := yamledit.UpsertInlineKey(out, line, "offset", wx-cox, wy-coy, wz-coz); ok2 {
+				gx, gy := partGridOffset(findPart(doc, op.ID), doc.Scene().GridStep)
+				if o2, ok2 := yamledit.UpsertInlineKey(out, line, "offset", wx-cox-gx, wy-coy-gy, wz-coz); ok2 {
 					out = o2
 				}
 			}
@@ -1002,7 +1037,6 @@ func parentOf(doc *Document, id string) string {
 	}
 	return found
 }
-
 
 // partContains reports whether want is p or anywhere in p's subtree.
 func partContains(p *CompositePart, want string) bool {

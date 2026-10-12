@@ -15,7 +15,7 @@ type Patch struct {
 // ReportDefect is one defect, located, with a fix where we can generate a
 // reliable one.
 type ReportDefect struct {
-	Kind     string `json:"kind"`     // caption-occlusion | neighbour-occlusion | overlap | crossing | tunnel
+	Kind     string `json:"kind"`     // caption-occlusion | neighbour-occlusion | content-fit | overlap | crossing | tunnel
 	Severity string `json:"severity"` // warning | error
 	Location string `json:"location"` // part/edge id(s) the defect involves
 	Message  string `json:"message"`
@@ -24,8 +24,14 @@ type ReportDefect struct {
 
 // RenderReport is the single payload emitted by `render --report`.
 type RenderReport struct {
-	Readability ReadabilityReport `json:"readability"`
-	Defects     []ReportDefect    `json:"defects"`
+	Readability       ReadabilityReport       `json:"readability"`
+	Defects           []ReportDefect          `json:"defects"`
+	ContentFits       []ContentFitObservation `json:"content_fits,omitempty"`
+	ScreenLabels      []ScreenLabel           `json:"screen_labels,omitempty"`
+	ConnectorLabels   []ConnectorLabelRecord  `json:"connector_labels,omitempty"`
+	PlanLabels        []PlanLabel             `json:"plan_labels,omitempty"`
+	IsoRouteCrowding  *IsoRouteCrowding       `json:"iso_route_crowding,omitempty"`
+	PlanRouteCrowding *PlanRouteCrowding      `json:"plan_route_crowding,omitempty"`
 }
 
 // BuildRenderReport assembles the report for the current scene state: R plus
@@ -33,14 +39,30 @@ type RenderReport struct {
 // attached to each in-group caption-ride (the value the repair loop converges
 // to, so applying it is guaranteed to clear the ride).
 func BuildRenderReport(doc *Document) RenderReport {
-	rep := RenderReport{Readability: Readability(doc)}
+	_, report := RenderSceneWithReport(doc)
+	return report
+}
+
+func buildRenderReport(doc *Document, labels []ScreenLabel) RenderReport {
+	rep := RenderReport{Readability: Readability(doc), ScreenLabels: labels}
 	if doc == nil {
 		return rep
 	}
-	pad := captionPatchValues(doc)
+	rep.ContentFits = ContentFits(doc)
+	for _, observation := range rep.ContentFits {
+		if issue, ok := contentFitIssue(observation); ok {
+			rep.Defects = append(rep.Defects, ReportDefect{Kind: "content-fit", Severity: string(issue.Severity), Location: observation.Path, Message: issue.Message})
+		}
+	}
+	var pad map[string]float64
 	for _, is := range LabelOcclusionIssues(doc) {
 		d := ReportDefect{Severity: string(is.Severity), Message: is.Message}
 		if m := captionOcclRe.FindStringSubmatch(is.Message); m != nil {
+			// The repair simulation only supplies caption padding patches.
+			// Plan reports and reports without caption rides do not use it.
+			if pad == nil {
+				pad = captionPatchValues(doc)
+			}
 			d.Kind = "caption-occlusion"
 			label := m[1]
 			d.Location = groupTarget(doc, label)
@@ -111,8 +133,9 @@ func ApplyPatch(doc *Document, p Patch) bool {
 	return false
 }
 
-// cloneDocParts deep-copies the nodes' parts (the only thing repair/report
-// mutate), so report-building never alters the caller's document.
+// cloneDocParts isolates fields changed by the repair simulation. Routing
+// repair also assigns connector.Routing, so those records must not alias the
+// caller's document even though their read-only nested geometry can be shared.
 func cloneDocParts(doc *Document) *Document {
 	nd := *doc
 	nd.Nodes = map[string]*Node{}
@@ -123,6 +146,15 @@ func cloneDocParts(doc *Document) *Document {
 		}
 		c := *n
 		c.Parts = cloneParts(n.Parts)
+		if n.Connectors != nil {
+			c.Connectors = make([]*Connector, len(n.Connectors))
+			for i, connector := range n.Connectors {
+				if connector != nil {
+					copy := *connector
+					c.Connectors[i] = &copy
+				}
+			}
+		}
 		if n.Layout != nil {
 			l := *n.Layout
 			c.Layout = &l

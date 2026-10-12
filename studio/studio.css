@@ -164,7 +164,7 @@ svg g[data-part-id]{transition:filter .12s;}
 svg g[data-part-id]:hover{filter:drop-shadow(0 0 5px var(--accent));}
 svg g[data-part-id].dragging{filter:drop-shadow(0 0 9px var(--accent));opacity:.82;}
 svg path[data-connector]{transition:stroke .1s,stroke-width .1s,filter .1s;}
-svg path[data-connector]:hover{stroke:var(--accent);stroke-width:6 !important;filter:drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 22px color-mix(in srgb,var(--accent) 45%,transparent));}
+svg path[data-connector]:hover,svg path[data-connector].edge-hover{stroke:var(--accent);stroke-width:6 !important;filter:drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 22px color-mix(in srgb,var(--accent) 45%,transparent));}
 svg path[data-connector].dragging{stroke:var(--accent);stroke-width:6 !important;filter:drop-shadow(0 0 5px var(--accent)) drop-shadow(0 0 14px var(--accent));}
 svg path[data-connector].pinned{stroke:var(--accent-deep);stroke-width:5 !important;filter:drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 9px var(--accent));}
 /* segment mid-point drag handles — circles inserted by JS on hover */

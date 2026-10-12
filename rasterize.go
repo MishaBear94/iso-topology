@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+
+	"github.com/MarkovWangRR/iso-topology/textmetrics"
 )
 
 // Rasterize converts an SVG file to a PNG deterministically and WITHOUT
@@ -33,7 +35,19 @@ func Rasterize(svgPath, pngPath string) error {
 		return exec.Command(bin, svgPath, pngPath).Run()
 	}
 	if p, err := exec.LookPath("resvg"); err == nil {
-		return exec.Command(p, svgPath, pngPath).Run()
+		return rasterizeResvg(p, svgPath, pngPath)
+	}
+	// ImageMagick's SVG delegate is environment-dependent and need not load
+	// CSS data fonts. Prefer the browser when bound fonts are present.
+	data, err := os.ReadFile(svgPath)
+	if err != nil {
+		return err
+	}
+	if len(textmetrics.FontsInSVG(string(data))) > 0 {
+		if p := chromeBinary(); p != "" {
+			return chromeScreenshot(p, svgPath, pngPath)
+		}
+		return fmt.Errorf("embedded Source Sans Pro requires resvg or Chrome/Chromium for faithful rasterization")
 	}
 	if p, err := exec.LookPath("magick"); err == nil {
 		return exec.Command(p, "-background", "none", svgPath, pngPath).Run()
@@ -44,6 +58,33 @@ func Rasterize(svgPath, pngPath string) error {
 	return fmt.Errorf("no rasterizer found — install resvg (recommended) or ImageMagick, " +
 		"have Chrome/Chromium on PATH (or set $CHROME_PATH / $PLAYWRIGHT_BROWSERS_PATH), " +
 		"or point $ISOTOPO_RASTERIZER at any binary invocable as `<bin> in.svg out.png`")
+}
+
+// The same immutable resource is used by Go shaping, SVG @font-face and
+// resvg's font database. The explicit custom-rasterizer contract is unchanged.
+func rasterizeResvg(bin, svgPath, pngPath string) error {
+	data, err := os.ReadFile(svgPath)
+	if err != nil {
+		return err
+	}
+	fonts := textmetrics.FontsInSVG(string(data))
+	var args []string
+	if len(fonts) > 0 {
+		dir, err := os.MkdirTemp("", "isotopo-fonts-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(dir)
+		for _, f := range fonts {
+			path := filepath.Join(dir, f.Hash()+".ttf")
+			if err := os.WriteFile(path, f.Bytes(), 0600); err != nil {
+				return err
+			}
+			args = append(args, "--use-font-file", path)
+		}
+	}
+	args = append(args, svgPath, pngPath)
+	return exec.Command(bin, args...).Run()
 }
 
 // chromeBinary locates a Chrome/Chromium executable.

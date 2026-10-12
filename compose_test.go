@@ -1,6 +1,7 @@
 package isotopo
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -119,5 +120,125 @@ nodes:
 	after := Readability(doc2)
 	if after.Overlaps > before.Overlaps {
 		t.Errorf("compose created an overlap: %d -> %d", before.Overlaps, after.Overlaps)
+	}
+}
+
+// Alignment is useful only when it preserves the topology's readability.
+// Vary heights and connections as well as offsets: disjoint ground footprints
+// alone do not prevent a new projected occlusion or a route through a node.
+func TestComposePreservesVisualDefects(t *testing.T) {
+	for seed := 0; seed < 24; seed++ {
+		t.Run(fmt.Sprint(seed), func(t *testing.T) {
+			doc, err := Parse(sloppyVariant(seed))
+			if err != nil {
+				t.Fatal(err)
+			}
+			n := doc.Scene()
+			for i, p := range n.Parts {
+				p.Geom.H = float64(50 + (seed*37+i*71)%220)
+			}
+			n.Connectors = []*Connector{
+				{From: "p0", To: "p3", Routing: "orthogonal"},
+				{From: "p1", To: "p4", Routing: "orthogonal"},
+				{From: "p2", To: "p5", Routing: "orthogonal"},
+			}
+			before := Readability(doc)
+			labels := LabelOcclusionIssues(doc)
+			bodyPairs := map[[2]string]float64{}
+			for _, oc := range BodyOcclusions(doc) {
+				bodyPairs[[2]string{oc.Hidden, oc.Occluder}] = oc.Frac
+			}
+			ComposeScene(doc)
+			after := Readability(doc)
+			if after.Occlusions > before.Occlusions || after.BodyOcclusions > before.BodyOcclusions ||
+				after.Overlaps > before.Overlaps || after.Tunnels > before.Tunnels || after.Crossings > before.Crossings {
+				t.Errorf("alignment introduced a visual defect: before %+v; after %+v", before, after)
+			}
+			if diff := DiffIssues(labels, LabelOcclusionIssues(doc)); len(diff.New) != 0 {
+				t.Errorf("alignment introduced label occlusions even if the count stayed constant: %v", diff.New)
+			}
+			for _, oc := range BodyOcclusions(doc) {
+				if oc.Frac > bodyPairs[[2]string{oc.Hidden, oc.Occluder}]+1e-9 {
+					t.Errorf("alignment introduced or worsened a specific body occlusion: %+v", oc)
+				}
+			}
+			first, _ := json.Marshal(doc)
+			fixes := ComposeScene(doc)
+			second, _ := json.Marshal(doc)
+			if len(fixes) != 0 || string(first) != string(second) {
+				t.Errorf("repeated composition changed an accepted result: %v", fixes)
+			}
+		})
+	}
+}
+
+func TestComposePreservesPlanRoutes(t *testing.T) {
+	for seed := 0; seed < 24; seed++ {
+		doc, err := Parse(sloppyVariant(seed))
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc.Canvas = &Canvas{Projection: "top"}
+		n := doc.Scene()
+		n.Connectors = []*Connector{
+			{From: "p0", To: "p3", Routing: "orthogonal"},
+			{From: "p1", To: "p4", Routing: "orthogonal"},
+			{From: "p2", To: "p5", Routing: "orthogonal"},
+		}
+		before := EvaluatePlan(cloneSceneForEval(n), nil, doc.Canvas)
+		ComposeScene(doc)
+		after := EvaluatePlan(cloneSceneForEval(n), nil, doc.Canvas)
+		if after.Crossings > before.Crossings || after.EdgesThroughNodes > before.EdgesThroughNodes || after.NodeOverlaps > before.NodeOverlaps {
+			t.Errorf("seed %d: plan route regression: before %+v; after %+v", seed, before, after)
+		}
+	}
+}
+
+func TestComposePreservesPlaceConstrainedOffset(t *testing.T) {
+	doc, err := Parse(sloppyVariant(4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := doc.Scene().Parts[1]
+	p.Place = &Place{RightOf: "p0"}
+	before, _ := json.Marshal(p)
+	ComposeScene(doc)
+	after, _ := json.Marshal(p)
+	if string(before) != string(after) {
+		t.Fatal("composition must preserve a place-constrained part, including its authored offset")
+	}
+}
+
+func TestComposeRejectsNewCrossingAndRestoresOffset(t *testing.T) {
+	doc, err := Parse(sloppyVariant(12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := doc.Scene()
+	for i, p := range n.Parts {
+		p.Geom.H = float64(50 + (12*37+i*71)%220)
+	}
+	n.Connectors = []*Connector{
+		{From: "p0", To: "p3", Routing: "orthogonal"},
+		{From: "p1", To: "p4", Routing: "orthogonal"},
+		{From: "p2", To: "p5", Routing: "orthogonal"},
+	}
+	p := n.Parts[2]
+	saved := *p.Offset
+	connections, _ := json.Marshal(n.Connectors)
+	if fixes := ComposeScene(doc); len(fixes) == 0 {
+		t.Fatal("safe alternatives should still improve this scene")
+	}
+	// The previous implementation moved p2 by +74 on x, introducing a new
+	// crossing. Both rejected trials must restore all coordinates exactly.
+	if *p.Offset != saved {
+		t.Fatalf("rejected move leaked coordinates: before %+v; after %+v", saved, *p.Offset)
+	}
+	afterConnections, _ := json.Marshal(n.Connectors)
+	if string(connections) != string(afterConnections) {
+		t.Fatal("alignment changed connector semantics or styles")
+	}
+	if r := EvaluateIso(n, doc.Theme, doc.Canvas); r.Crossings != 0 || r.EdgesThroughNodes != 0 {
+		t.Fatalf("safe alignment must preserve the initially clear routes: %+v", r)
 	}
 }

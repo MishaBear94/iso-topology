@@ -78,6 +78,10 @@ func DefaultIsoCylinder() IsoCylinderOpts {
 }
 
 func RenderIsoCylinder(o IsoCylinderOpts) string {
+	return renderIsoCylinder(o, nil)
+}
+
+func renderIsoCylinder(o IsoCylinderOpts, fonts fontResources) string {
 	rx := o.Radius
 	ry := rx * math.Tan(math.Pi/6)
 	h := o.Height
@@ -157,9 +161,11 @@ func RenderIsoCylinder(o IsoCylinderOpts) string {
 	// Bounded by: outer vertical edge, front-bottom quarter arc, front
 	// meridian (vertical line at x=0), front-top quarter arc.
 	// Both halves carry no stroke — the silhouette is one separate path so
-	// no seam appears on the front meridian.
+	// no seam appears on the front meridian. The top arc traverses the
+	// ellipse in the opposite direction to the bottom arc. Using the same
+	// sweep fills part of an open/transparent roof with the side color.
 	fmt.Fprintf(&sb,
-		`<path data-face="side-left" d="M %.2f %.2f L %.2f %.2f A %.2f %.2f 0 0 0 %.2f %.2f L %.2f %.2f A %.2f %.2f 0 0 0 %.2f %.2f Z" fill="%s" stroke="none"/>`,
+		`<path data-face="side-left" d="M %.2f %.2f L %.2f %.2f A %.2f %.2f 0 0 0 %.2f %.2f L %.2f %.2f A %.2f %.2f 0 0 1 %.2f %.2f Z" fill="%s" stroke="none"/>`,
 		leftTopX, leftTopY,
 		leftBotX, leftBotY,
 		rx, ry, botFrontX, botFrontY,
@@ -168,7 +174,7 @@ func RenderIsoCylinder(o IsoCylinderOpts) string {
 		escapeAttr(leftFill),
 	)
 	fmt.Fprintf(&sb,
-		`<path data-face="side-right" d="M %.2f %.2f L %.2f %.2f A %.2f %.2f 0 0 1 %.2f %.2f L %.2f %.2f A %.2f %.2f 0 0 1 %.2f %.2f Z" fill="%s" stroke="none"/>`,
+		`<path data-face="side-right" d="M %.2f %.2f L %.2f %.2f A %.2f %.2f 0 0 1 %.2f %.2f L %.2f %.2f A %.2f %.2f 0 0 0 %.2f %.2f Z" fill="%s" stroke="none"/>`,
 		rightTopX, rightTopY,
 		rightBotX, rightBotY,
 		rx, ry, botFrontX, botFrontY,
@@ -219,6 +225,7 @@ func RenderIsoCylinder(o IsoCylinderOpts) string {
 		e, f, s, s,
 		o.Label, nil, o.Icon, o.IconScale, "", 0, 0,
 		o.FontFamily, o.FontSize, o.FontWeight, o.FontColor,
+		fonts,
 	)
 
 	if o.OutlineColor != "" && o.OutlineWidth > 0 {

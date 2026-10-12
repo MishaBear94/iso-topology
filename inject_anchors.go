@@ -17,6 +17,7 @@ var anchorNames = []string{
 	"bottom", "bottom-mid",
 	"left", "left-mid", "right", "right-mid",
 	"back", "back-mid", "front", "front-mid",
+	"port-left", "port-back", "port-right", "port-front",
 }
 
 // anchorResolver resolves a connector endpoint reference ("partID" or
@@ -27,7 +28,7 @@ var anchorNames = []string{
 // function. All methods are pure reads of byID / tx / ty.
 type anchorResolver struct {
 	byID     map[string]partInfo
-	tx, ty   float64        // parts→screen origin translation (for screen())
+	tx, ty   float64           // parts→screen origin translation (for screen())
 	parentOf map[string]string // nested part ID → scene-level container ID (Fix 2)
 }
 
@@ -59,6 +60,9 @@ func (ar *anchorResolver) world(ref string) (wx, wy, wz float64, ok bool) {
 	if !found {
 		return 0, 0, 0, false
 	}
+	if side, fixed := fixedPortSide(anchor); fixed {
+		return contourPort(p, side)
+	}
 	wx, wy, wz = p.offWX+p.w/2, p.offWY+p.d/2, p.offWZ+p.h
 	switch anchor {
 	// 2.5D ground routing: side anchors sit at the face's BOTTOM edge (z=offWZ)
@@ -73,7 +77,10 @@ func (ar *anchorResolver) world(ref string) (wx, wy, wz float64, ok bool) {
 	case "front-mid", "front":
 		wx, wy, wz = p.offWX+p.w/2, p.offWY+p.d, p.offWZ
 	case "top-mid", "top", "center":
-		// keep defaults
+		if p.body != nil && p.body.TopAnchor != nil {
+			a := *p.body.TopAnchor
+			wx, wy, wz = p.offWX+a[0], p.offWY+a[1], p.offWZ+a[2]
+		}
 	case "bottom-mid", "bottom":
 		wz = p.offWZ
 	}
@@ -85,6 +92,9 @@ func (ar *anchorResolver) world(ref string) (wx, wy, wz float64, ok bool) {
 // back to the x-axis.
 func (ar *anchorResolver) exit(ref string) (dx, dy float64) {
 	_, anchor := ar.parse(ref)
+	if side, fixed := fixedPortSide(anchor); fixed {
+		return portDirection(side)
+	}
 	switch anchor {
 	case "left-mid", "left":
 		return -1, 0
@@ -97,6 +107,7 @@ func (ar *anchorResolver) exit(ref string) (dx, dy float64) {
 	}
 	return 1, 0
 }
+
 // baseZ returns the part's ground level (world z of its bottom face) — the
 // height the ground-plane router walks so connectors hug the floor and read as
 // links lying on the ground, occluded by the bodies they pass behind.
@@ -109,69 +120,40 @@ func (ar *anchorResolver) baseZ(ref string) float64 {
 	return p.offWZ
 }
 
-// refineSilhouette adjusts a bbox-based side anchor (wx, wy) onto the actual
-// visible silhouette of non-prismatic shapes:
-//
-//	circle / sphere: the silhouette at a given z is a disc of radius
-//	    sqrt(r² − (z − cz)²) centred at the sphere centroid. Anchors
-//	    slide inward when z is off the equator.
-//	cloud:           the rendered outline insets from the bbox by
-//	    leftX=0.04·w / rightX=0.96·w (matches sampleCloudOutline);
-//	    back/front sit on the trunk's top/bottom edges.
-//
-// Other shapes are pass-through (bbox already matches silhouette).
+// refineSilhouette docks cardinal ports on the actual projected body. The
+// inverse keeps the routing height fixed; this is a screen docking contract,
+// not a general physical surface-port solver. Top/centre intent is retained.
 func (ar *anchorResolver) refineSilhouette(ref string, wx, wy, z float64) (float64, float64) {
+	if isFixedPortRef(ref) {
+		return wx, wy
+	}
 	id, anchor := ar.parse(ref)
 	p, found := ar.byID[id]
 	if !found {
 		return wx, wy
 	}
+	// The rendered curved bodies are not their world bounding boxes. Resolve
+	// cardinal ports against the actual projected union, then invert at the
+	// requested routing height. Keep top/centre anchors at the author's point.
+	if anchor == "left" || anchor == "left-mid" || anchor == "right" || anchor == "right-mid" ||
+		anchor == "front" || anchor == "front-mid" || anchor == "back" || anchor == "back-mid" {
+		switch p.shape {
+		case "circle", "cylinder", "stored_data", "queue", "person", "custom_path", "cloud":
+			if x, y, ok := projectedBodyAnchor(p, wx, wy, z); ok {
+				return x, y
+			}
+		}
+	}
 	// v3.2.1 — prism family: bbox face-midpoints sit OUTSIDE the inscribed
 	// polygon (hexagon's left-mid is in empty canvas) or on a vertex, piling
 	// arrowheads and detaching exits. Re-anchor on the base polygon along the
 	// bbox-anchor direction.
-	if sides := prismSidesFor(p.shape, p.sides); sides >= 3 {
+	if sides := prismSidesFor(p.shape, p.sides); sides >= 3 && (p.shape == "triprism" || p.shape == "hexprism" || p.shape == "octprism") {
 		dx, dy := wx-(p.offWX+p.w/2), wy-(p.offWY+p.d/2)
 		ax, ay := iso25d.PrismGroundAnchor(p.w, p.d, sides, dx, dy)
 		return p.offWX + ax, p.offWY + ay
 	}
-	switch p.shape {
-	case "circle":
-		cx := p.offWX + p.w/2
-		cy := p.offWY + p.d/2
-		cz := p.offWZ + p.h/2
-		r := math.Min(math.Min(p.w, p.d), p.h) / 2
-		dz := z - cz
-		if math.Abs(dz) >= r {
-			return wx, wy
-		}
-		rXY := math.Sqrt(r*r - dz*dz)
-		switch anchor {
-		case "left", "left-mid":
-			return cx - rXY, cy
-		case "right", "right-mid":
-			return cx + rXY, cy
-		case "back", "back-mid":
-			return cx, cy - rXY
-		case "front", "front-mid":
-			return cx, cy + rXY
-		}
-	case "cloud":
-		leftX := 0.04 * p.w
-		rightX := 0.96 * p.w
-		horizonY := 0.10 * p.d // top of bumps row
-		bottomY := 0.85 * p.d  // bottom of trunk
-		switch anchor {
-		case "left", "left-mid":
-			return p.offWX + leftX, p.offWY + p.d/2
-		case "right", "right-mid":
-			return p.offWX + rightX, p.offWY + p.d/2
-		case "back", "back-mid":
-			return p.offWX + p.w/2, p.offWY + horizonY
-		case "front", "front-mid":
-			return p.offWX + p.w/2, p.offWY + bottomY
-		}
-	}
+
 	return wx, wy
 }
 

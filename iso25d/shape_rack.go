@@ -30,6 +30,10 @@ func (RackShapeProvider) Footprint(w, d, h float64) (float64, float64) {
 }
 
 func RenderIsoRack(o IsoBoxOpts, slots int) string {
+	return renderIsoRack(o, slots, nil)
+}
+
+func renderIsoRack(o IsoBoxOpts, slots int, fonts fontResources) string {
 	if slots <= 0 {
 		slots = 4
 	}
@@ -107,6 +111,7 @@ func RenderIsoRack(o IsoBoxOpts, slots int) string {
 		g.E[0], g.E[1], o.Width, o.Depth,
 		o.Label, o.LabelLines, o.Icon, o.IconScale, o.IconAnchor, o.IconOffX, o.IconOffY,
 		o.FontFamily, o.FontSize, o.FontWeight, o.FontColor,
+		fonts,
 	)
 
 	closeWrapper(&sb)

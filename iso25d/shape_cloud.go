@@ -29,6 +29,10 @@ const (
 // the cloud's inscribed content rect). RightFill and the v3.3 faces map are
 // not used — the cloud has no discrete right face.
 func RenderIsoCloud(o IsoBoxOpts) string {
+	return renderIsoCloud(o, nil)
+}
+
+func renderIsoCloud(o IsoBoxOpts, fonts fontResources) string {
 	w, d, h, m := o.Width, o.Depth, o.Height, o.Margin
 
 	outline := sampleCloudOutline(w, d)
@@ -54,6 +58,7 @@ func RenderIsoCloud(o IsoBoxOpts) string {
 			maxY = sy
 		}
 	}
+	minX, minY, maxX, maxY = cloudContentBounds(o, minX, minY, maxX, maxY)
 	tx, ty := -minX+m, -minY+m
 	W := maxX - minX + 2*m
 	H := maxY - minY + 2*m
@@ -207,11 +212,17 @@ func RenderIsoCloud(o IsoBoxOpts) string {
 			ox+tx, oy+(ty-h), cloudContentW*w, cloudContentD*d,
 			o.Label, o.LabelLines, o.Icon, o.IconScale, o.IconAnchor, o.IconOffX, o.IconOffY,
 			o.FontFamily, o.FontSize, o.FontWeight, o.FontColor,
+			fonts,
 		)
+	} else if caption := cloudCaption(o); len(caption) > 0 {
+		ox, oy := cloudCaptionOrigin(o)
+		fmt.Fprintf(&sb, `<g transform="matrix(%.4f %.4f %.4f %.4f %.2f %.2f)">`, cos30, sin30, -cos30, sin30, ox+tx, oy+ty)
+		writeBoundCaption(&sb, caption, 0, 0, o.FontColor, "", fonts)
+		sb.WriteString(`</g>`)
 	} else {
 		// 顶面文字：计算轮廓点的实际重心，以重心为原点调用 writeTopLabelAndIcon，
 		// 使文字精确居中于云朵顶面，而不是假设面填满整个 (w×d) 矩形。
-		// (icon 为空时保持这条历史路径，输出与旧版逐字节一致。)
+		// (未绑定完整字体时保持这条历史路径，输出与旧版逐字节一致。)
 		var sumLX, sumLY float64
 		for _, p := range outline {
 			sumLX += p[0]
@@ -239,10 +250,11 @@ func RenderIsoCloud(o IsoBoxOpts) string {
 // bump on the right, and a rounded-rectangle body below.
 //
 // The shape is the union boundary of 4 circles analytically traced:
-//   bMain  – large left bump
-//   bSec   – smaller right bump
-//   bCL    – rounded bottom-left corner of the body
-//   bCR    – rounded bottom-right corner of the body
+//
+//	bMain  – large left bump
+//	bSec   – smaller right bump
+//	bCL    – rounded bottom-left corner of the body
+//	bCR    – rounded bottom-right corner of the body
 //
 // Unit frame: ux=0..1 left→right, uy=0..1 top→bottom (small uy = high).
 // Returned in local iso coords (ux↔uy transposed, scaled to w and d).
@@ -255,9 +267,9 @@ func sampleCloudOutline(w, d float64) [][2]float64 {
 	//   dist(bMain,bSec)=0.351 < r_sum=0.44  ✓
 	//   dist(bSec,bCR)=0.283   < r_sum=0.33  ✓
 	bMain := circ{0.35, 0.45, 0.26} // large main bump
-	bSec  := circ{0.68, 0.57, 0.18} // smaller secondary bump
-	bCL   := circ{0.11, 0.76, 0.15} // body bottom-left corner
-	bCR   := circ{0.89, 0.76, 0.15} // body bottom-right corner
+	bSec := circ{0.68, 0.57, 0.18}  // smaller secondary bump
+	bCL := circ{0.11, 0.76, 0.15}   // body bottom-left corner
+	bCR := circ{0.89, 0.76, 0.15}   // body bottom-right corner
 
 	// ── helpers ──────────────────────────────────────────────────────────────
 
@@ -365,13 +377,13 @@ func sampleCloudOutline(w, d float64) [][2]float64 {
 		K)...)
 
 	// 4. Flat base connecting the two bottom corners.
-	baseY := bCL.cy + bCL.r // = 0.89
+	baseY := bCL.cy + bCL.r                      // = 0.89
 	raw = append(raw, [2]float64{bCR.cx, baseY}) // right end of base
 	raw = append(raw, [2]float64{bCL.cx, baseY}) // left end of base
 
 	// 5. Left corner — from bCL's bottom, up the left side, to the body-left seam.
 	raw = append(raw, sampleArcCW(bCL,
-		math.Pi/2,          // bottom of bCL (90°)
+		math.Pi/2,           // bottom of bCL (90°)
 		angOf(bCL, jMainCL), // upper-right of bCL (~338°)
 		K)...)
 

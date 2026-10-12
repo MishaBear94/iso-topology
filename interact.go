@@ -1,25 +1,26 @@
 package isotopo
 
+import (
+	"github.com/MarkovWangRR/iso-topology/iso25d"
+	"github.com/MarkovWangRR/iso-topology/textmetrics"
+)
+
 // interact.go — server-side interaction model for Studio's direct-manipulation
 // layer.
 //
-// Instead of having the browser reverse-engineer node geometry from projected
-// SVG pixels (elementsFromPoint, getScreenCTM, polygon vertex math), the
-// server emits a lightweight "interaction model" alongside every rendered SVG.
-// The model carries each part's world-space AABB so the browser can do:
-//
-//   1. Reparent hit-test: which container does a dragged node's footprint
-//      overlap most? (replaces the fragile pixel-based containerUnder)
-//   2. Anchor display: where are the face-centre anchor points in world space?
-//      (replaces the polygon-vertex scan that breaks on shapes without faces)
-//
-// The model is pure data derived from the resolved layout — no SVG rendering
-// involved — so it adds negligible cost to the render round-trip.
+// The server emits resolved world boxes, parent identities and projected
+// body/content regions alongside every rendered SVG. Studio uses these for
+// container targeting, instance-aware drag previews and polygon marquee tests.
+// Screen-oriented labels are delivered separately by SceneResult from the
+// same SVG emission; Studio combines them with these world regions. Connection ports
+// share the renderer's fixed contour-port resolver; legacy Anchors are kept
+// only for compatibility with older consumers.
 
-// PartModel is the world-space geometry of one part after layout resolution.
-// Coordinates are in world units (same space as offset.wx/wy/wz in the DSL).
+// PartModel describes one source part after layout resolution. Boxes and
+// anchors use world units; SelectionRegions use projected world coordinates.
 type PartModel struct {
 	ID        string        `json:"id"`
+	ParentID  string        `json:"parentId,omitempty"`
 	Container bool          `json:"container"`
 	X         float64       `json:"x"`
 	Y         float64       `json:"y"`
@@ -28,14 +29,22 @@ type PartModel struct {
 	D         float64       `json:"d"`
 	H         float64       `json:"h,omitempty"`
 	Anchors   []AnchorPoint `json:"anchors,omitempty"`
+	// Ports use the renderer's fixed contour-port contract. Anchors above are
+	// retained for older consumers; Studio uses Ports, including instance IDs.
+	Ports []ConnectionPort `json:"ports"`
+	// SelectionRegions are projected world polygons before canvas translation.
+	// They include body and content across stack instances; never convexify the
+	// union or substitute its AABB for the narrow-phase marquee hit test.
+	SelectionRegions     [][][2]float64 `json:"selectionRegions"`
+	SelectionApproximate bool           `json:"selectionApproximate,omitempty"`
 }
 
 // AnchorPoint is one named connection point on a part's surface.
 // Name matches the anchor suffix used in connector from/to (e.g. "top",
 // "left", "right", "bottom"). WX/WY/WZ are world coordinates — the full
-// triple is needed so the client can apply the SAME iso projection the
-// renderer uses (projectIso subtracts wz), keeping the displayed handle
-// exactly on the node's surface instead of dropping the height term.
+// triple is needed so the client can apply the renderer's iso projection,
+// including height. The legacy box anchors do not describe every shape's
+// actual surface or the renderer's resolved connector ports.
 type AnchorPoint struct {
 	Name string  `json:"name"`
 	WX   float64 `json:"wx"`
@@ -50,6 +59,10 @@ type AnchorPoint struct {
 // The caller should embed the result in the render-response JSON under the
 // key "model" so Studio can read it without a separate round-trip.
 func BuildInteractionModel(doc *Document) []PartModel {
+	return buildInteractionModel(doc, nil)
+}
+
+func buildInteractionModel(doc *Document, plan *resolvedPlanScene) []PartModel {
 	if doc == nil {
 		return nil
 	}
@@ -57,25 +70,118 @@ func BuildInteractionModel(doc *Document) []PartModel {
 	if scene == nil {
 		return nil
 	}
-	// buildPlanModel runs applyLayout internally and returns the flat rect list
-	// with absolute world coordinates — exactly what we need.
-	rects, _, _ := buildPlanModel(scene, doc.Theme, doc.Canvas)
+	// Reuse resolved world geometry without routing every edge merely to
+	// display handles. The resolver owns its layout copy and includes grid
+	// positions, parent elevation and the slab children stand on.
+	var resolved *Node
+	var rects []planRect
+	if plan != nil {
+		resolved, rects = plan.node, plan.rects
+	} else {
+		resolved, rects = resolvedPlanGeometry(scene, doc.Theme, doc.Canvas)
+	}
+	parents := map[string]string{}
+	portBodies := map[string]bool{}
+	var visit func([]*CompositePart, string)
+	visit = func(parts []*CompositePart, parent string) {
+		for _, p := range parts {
+			if p == nil {
+				continue
+			}
+			owner := parent
+			if p.ID != "" {
+				parents[p.ID] = parent
+				portBodies[p.ID] = hasPortBody(p.Shape)
+				owner = p.ID
+			}
+			visit(p.Parts, owner)
+		}
+	}
+	visit(resolved.Parts, "")
 	if len(rects) == 0 {
 		return nil
 	}
 	out := make([]PartModel, 0, len(rects))
+	byID := make(map[string]int, len(rects))
+	top := doc.Canvas != nil && doc.Canvas.Projection == "top"
 	for _, r := range rects {
 		if r.id == "" {
 			continue
 		}
 		pm := PartModel{
 			ID:        r.id,
+			ParentID:  parents[r.id],
 			Container: r.container,
-			X: r.x, Y: r.y, Z: r.z,
+			X:         r.x, Y: r.y, Z: r.z,
 			W: r.w, D: r.d, H: r.h,
-			Anchors: faceAnchors(r),
+			Anchors:          faceAnchors(r),
+			SelectionRegions: make([][][2]float64, 0),
+			Ports:            make([]ConnectionPort, 0),
 		}
+		if top {
+			// Plan nodes are rectangular footprints. Their small rounded
+			// corners remain an explicitly approximate selection envelope.
+			pm.SelectionRegions = [][][2]float64{{{r.x, r.y}, {r.x + r.w, r.y}, {r.x + r.w, r.y + r.d}, {r.x, r.y + r.d}}}
+			pm.SelectionApproximate = true
+			if eligible, known := portBodies[r.id]; eligible || !known && hasPortBody(resolved.Shape) {
+				for _, name := range fixedPortNames {
+					port, _ := planPort(r, name)
+					pm.Ports = append(pm.Ports, port)
+				}
+			}
+		}
+		byID[r.id] = len(out)
 		out = append(out, pm)
+	}
+	if top {
+		needsTitles := false
+		for _, r := range rects {
+			needsTitles = needsTitles || r.label != "" && textmetrics.ResolveBuiltin(r.family, r.weight) != nil
+		}
+		if !needsTitles {
+			return out
+		}
+		if plan == nil {
+			plan = resolvePlanSceneGeometry(resolved, rects, doc.Canvas, true, false)
+		}
+		ox, oy := plan.ox, plan.oy
+		content := plan.layoutContent()
+		for _, p := range content.texts {
+			i, ok := byID[p.record.PartID]
+			if !ok {
+				continue
+			}
+			for _, r := range p.inkRects() {
+				r.x0 -= ox
+				r.x1 -= ox
+				r.y0 -= oy
+				r.y1 -= oy
+				// SVG anchors round after canvas translation. Enclose that
+				// subpixel difference in world-space selection geometry.
+				r = r.inflate(.01)
+				out[i].SelectionRegions = append(out[i].SelectionRegions, [][2]float64{{r.x0, r.y0}, {r.x1, r.y0}, {r.x1, r.y1}, {r.x0, r.y1}})
+			}
+		}
+		return out
+	}
+	for _, p := range lowerCompositeParts(resolved.Parts, 0, 0, 0, resolved.GridStep) {
+		i, ok := byID[stackBase(p.ID)]
+		if !ok {
+			continue
+		}
+		shape, opts := Flatten(&Node{Shape: p.Shape, Geom: p.Geom, Style: p.Style, Preset: p.Preset, Role: p.Role, Label: p.Label, Icon: p.Icon, Content: p.Content}, doc.Theme)
+		body := iso25d.ShapeBody(shape, opts)
+		w, d, h := iso25d.ShapeDimensions(shape, opts)
+		info := partInfo{id: p.ID, shape: shape, body: &body, w: w, d: d, h: h}
+		if p.Offset != nil {
+			info.offWX, info.offWY, info.offWZ = p.Offset.WX, p.Offset.WY, p.Offset.WZ
+		}
+		out[i].SelectionRegions = append(out[i].SelectionRegions, partBodyRegion(info, 0, 0)...)
+		out[i].Ports = append(out[i].Ports, instancePorts(info)...)
+		text := partContentRegions(p, doc.Theme, "text")
+		out[i].SelectionRegions = append(out[i].SelectionRegions, text...)
+		out[i].SelectionRegions = append(out[i].SelectionRegions, partContentRegions(p, doc.Theme, "icon")...)
+		out[i].SelectionApproximate = out[i].SelectionApproximate || body.Envelope || len(text) > 0
 	}
 	return out
 }
@@ -86,10 +192,11 @@ func BuildInteractionModel(doc *Document) []PartModel {
 // doesn't need to touch the DOM at all for anchor display.
 //
 // Convention (matches iso projection orientation):
-//   top    — centre of the top (roof) face: (cx, y,   z+h)   world
-//   right  — centre of the right face:       (x+w, cy, z+h/2)
-//   bottom — nadir (lowest visible point):   (cx, y+d, z)
-//   left   — centre of the left face:         (x, cy,  z+h/2)
+//
+//	top    — centre of the top (roof) face: (cx, y,   z+h)   world
+//	right  — centre of the right face:       (x+w, cy, z+h/2)
+//	bottom — nadir (lowest visible point):   (cx, y+d, z)
+//	left   — centre of the left face:         (x, cy,  z+h/2)
 //
 // The z term is what puts each dot on the right face: the roof handle rides
 // the top at z+h, the side handles sit at mid-height, the nadir is on the
@@ -99,10 +206,10 @@ func faceAnchors(r planRect) []AnchorPoint {
 	cx := r.x + r.w/2
 	cy := r.y + r.d/2
 	return []AnchorPoint{
-		{Name: "top",    WX: cx,        WY: r.y,       WZ: r.z + r.h},
-		{Name: "right",  WX: r.x + r.w, WY: cy,        WZ: r.z + r.h/2},
-		{Name: "bottom", WX: cx,        WY: r.y + r.d, WZ: r.z},
-		{Name: "left",   WX: r.x,       WY: cy,        WZ: r.z + r.h/2},
+		{Name: "top", WX: cx, WY: r.y, WZ: r.z + r.h},
+		{Name: "right", WX: r.x + r.w, WY: cy, WZ: r.z + r.h/2},
+		{Name: "bottom", WX: cx, WY: r.y + r.d, WZ: r.z},
+		{Name: "left", WX: r.x, WY: cy, WZ: r.z + r.h/2},
 	}
 }
 
@@ -139,8 +246,14 @@ func WorldDropTarget(model []PartModel, dragID string, minOverlapFrac float64) s
 	// Build a quick subtree set so we never drop a container into its own child.
 	// (The server applyReparent also guards this, but we should not even try.)
 	subtree := map[string]bool{dragID: true}
-	// We don't have the tree structure in the flat model, so subtree detection
-	// is done server-side. Here we just exclude the drag node itself.
+	for changed := true; changed; {
+		changed = false
+		for _, pm := range model {
+			if pm.ParentID != "" && subtree[pm.ParentID] && !subtree[pm.ID] {
+				subtree[pm.ID], changed = true, true
+			}
+		}
+	}
 
 	bestID := ""
 	bestArea := 0.0

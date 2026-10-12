@@ -199,7 +199,11 @@ func (CustomPathShapeProvider) Silhouette(w, d, h float64, params map[string]any
 func (CustomPathShapeProvider) ContentAnchor() string { return "top" }
 
 func (CustomPathShapeProvider) ContentRectFor(w, d, h float64, params map[string]any) ContentRect {
-	return largestInscribedRect(customPathBase(w, d, params), w, d)
+	poly := customPathBase(w, d, params)
+	if simplePaintPolygon(poly) && !convexGround(poly) {
+		return concaveContentRect(poly, w, d)
+	}
+	return largestInscribedRect(poly, w, d)
 }
 
 func (CustomPathShapeProvider) Footprint(w, d, _ float64) (float64, float64) { return w, d }
@@ -214,6 +218,10 @@ func init() {
 
 // RenderIsoCustomPath extrudes an arbitrary polygon path vertically.
 func RenderIsoCustomPath(o IsoBoxOpts, pathStr string) string {
+	return renderIsoCustomPath(o, pathStr, nil)
+}
+
+func renderIsoCustomPath(o IsoBoxOpts, pathStr string, fonts fontResources) string {
 	params := map[string]any{}
 	if pathStr != "" {
 		params["path"] = pathStr
@@ -337,6 +345,7 @@ func RenderIsoCustomPath(o IsoBoxOpts, pathStr string) string {
 		ox+g.Tx, oy+g.Ty, cr.W, cr.H,
 		o.Label, o.LabelLines, o.Icon, o.IconScale, o.IconAnchor, o.IconOffX, o.IconOffY,
 		o.FontFamily, o.FontSize, o.FontWeight, o.FontColor,
+		fonts,
 	)
 
 	if o.OutlineColor != "" && o.OutlineWidth > 0 {

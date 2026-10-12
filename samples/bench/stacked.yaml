@@ -1,10 +1,11 @@
 # Z-stacked board (plates + chip via place:above): footprints overlap in plane by
 # DESIGN, separated in height. Repair must treat this as clean (no false overlap).
+# Base's top face is covered by mid; its required name uses a screen label.
 canvas: { background: "#0E1726", padding: 50 }
 nodes:
   scene:
     shape: composite
     parts:
-      - { id: base, shape: rectangle, geom: { w: 300, d: 300, h: 26 }, label: "Base", style: { palette: { top: "#243A52" }, text: { color: "#DCE7F5" } } }
+      - { id: base, shape: rectangle, geom: { w: 300, d: 300, h: 26 }, label: "Base", style: { palette: { top: "#243A52" }, text: { color: "#DCE7F5", orient: screen } } }
       - { id: mid,  shape: rectangle, geom: { w: 300, d: 300, h: 26 }, place: { above: base }, style: { palette: { top: "#2C4A63" } } }
       - { id: chip, shape: rectangle, geom: { w: 110, d: 110, h: 40 }, label: "Chip", place: { above: mid }, style: { palette: { top: "#5A3410" }, text: { color: "#FFD9A8" } } }

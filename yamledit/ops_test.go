@@ -314,3 +314,19 @@ func TestScalarHelpers(t *testing.T) {
 		t.Errorf("stringifyYAML(nil) = %q", got)
 	}
 }
+
+func TestConnectorLineSkipsNestedWaypointLists(t *testing.T) {
+	for _, pad := range []string{"  ", ""} {
+		src := "connectors: # routes\n" + pad + "- from: first\n" + pad + "  to: target\n" + pad + "  waypoints3d:\n" + pad + "  - {wx: 1, wy: 2, wz: 30}\n" + pad + "  - {wx: 40, wy: 2, wz: 30}\n# outside-indented comment\n" + pad + "- from: second\n" + pad + "  to: target\nnext: value\n"
+		if a, b, c := FindConnectorLine(src, 0), FindConnectorLine(src, 1), FindConnectorLine(src, 2); a != 1 || b != 7 || c != -1 {
+			t.Fatalf("connector lines %d %d %d", a, b, c)
+		}
+		out, ok := SetField(src, FindConnectorLine(src, 1), []string{"label"}, "second only")
+		if !ok {
+			t.Fatal("edit failed")
+		}
+		if !strings.Contains(out, pad+"- from: first\n"+pad+"  to: target\n"+pad+"  waypoints3d:\n"+pad+"  - {wx: 1, wy: 2, wz: 30}") {
+			t.Fatal("editing second connector changed first waypoint list", out)
+		}
+	}
+}

@@ -97,17 +97,22 @@ type FaceGradient struct {
 // have a natural 3D analogue, we use a sensible fallback (flat slab, low
 // box, etc.).
 func Convert2DTo25D(shapeType string, o ConvertOpts) string {
-	switch strings.ToLower(strings.TrimSpace(shapeType)) {
+	return convert2DTo25D(shapeType, o, nil)
+}
+
+func convert2DTo25D(shapeType string, o ConvertOpts, fonts fontResources) string {
+	shapeType = strings.ToLower(strings.TrimSpace(shapeType))
+	switch shapeType {
 
 	case "cylinder", "stored_data", "queue":
 		c := DefaultIsoCylinder()
 		applyCylinder(o, &c)
-		return RenderIsoCylinder(c)
+		return renderIsoCylinder(c, fonts)
 
 	case "circle":
 		s := DefaultIsoSphere()
 		applySphere(o, &s)
-		return RenderIsoSphere(s)
+		return renderIsoSphere(s, fonts)
 
 	case "composite":
 		// Composite parts are dispatched at the isotopo layer via
@@ -119,7 +124,7 @@ func Convert2DTo25D(shapeType string, o ConvertOpts) string {
 		p := DefaultIsoPerson()
 		applyPerson(o, &p)
 		p.HeadStyle = "sphere"
-		return RenderIsoPerson(p)
+		return renderIsoPerson(p, fonts)
 
 	case "cloud":
 		b := DefaultIsoBox()
@@ -134,7 +139,7 @@ func Convert2DTo25D(shapeType string, o ConvertOpts) string {
 		if b.Height < mh {
 			b.Height = mh
 		}
-		return RenderIsoCloud(b)
+		return renderIsoCloud(b, fonts)
 
 	case "iso_text", "title":
 		b := DefaultIsoBox()
@@ -145,7 +150,7 @@ func Convert2DTo25D(shapeType string, o ConvertOpts) string {
 	case "wedge":
 		b := DefaultIsoBox()
 		applyBox(o, &b)
-		return RenderIsoWedge(b)
+		return renderIsoWedge(b, fonts)
 
 	// v3.10 — custom_path: arbitrary polygon base extruded vertically.
 	case "custom_path":
@@ -157,7 +162,7 @@ func Convert2DTo25D(shapeType string, o ConvertOpts) string {
 				pathStr = p
 			}
 		}
-		return RenderIsoCustomPath(b, pathStr)
+		return renderIsoCustomPath(b, pathStr, fonts)
 
 	// v3.2 (M2) — prism family: regular n-gon base × vertical extrude.
 	case "triprism", "hexprism", "octprism":
@@ -175,13 +180,13 @@ func Convert2DTo25D(shapeType string, o ConvertOpts) string {
 		if sides < 3 {
 			sides = 6
 		}
-		return RenderIsoPrism(b, sides)
+		return renderIsoPrism(b, sides, fonts)
 
 	// v3.11 — array shapes: tiled cell grids.
 	case "array1d", "array2d", "array3d":
 		b := DefaultIsoBox()
 		applyBox(o, &b)
-		return RenderIsoArray(b, shapeType)
+		return renderIsoArray(b, shapeType, fonts)
 
 	// v3.11 — rack: server rack with slot shelves.
 	case "rack":
@@ -196,7 +201,7 @@ func Convert2DTo25D(shapeType string, o ConvertOpts) string {
 				slots = int(v)
 			}
 		}
-		return RenderIsoRack(b, slots)
+		return renderIsoRack(b, slots, fonts)
 
 	// rectangle / square / empty / unknown → plain iso box.
 	case "rectangle", "square", "":
@@ -206,12 +211,12 @@ func Convert2DTo25D(shapeType string, o ConvertOpts) string {
 			s := math.Max(b.Width, b.Depth)
 			b.Width, b.Depth = s, s
 		}
-		return RenderIsoBox(b)
+		return renderIsoBox(b, fonts)
 
 	default:
 		b := DefaultIsoBox()
 		applyBox(o, &b)
-		return RenderIsoBox(b)
+		return renderIsoBox(b, fonts)
 	}
 }
 

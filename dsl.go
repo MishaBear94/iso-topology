@@ -24,7 +24,7 @@ type Node struct {
 	Shape     string     `yaml:"shape" json:"shape"`
 	Geom      *Geom      `yaml:"geom,omitempty" json:"geom,omitempty"`
 	Style     *Style     `yaml:"style,omitempty" json:"style,omitempty"`
-	Role   string `yaml:"role,omitempty" json:"role,omitempty"` // semantic slot: theme.roles lookup
+	Role      string     `yaml:"role,omitempty" json:"role,omitempty"`     // semantic slot: theme.roles lookup
 	Preset    string     `yaml:"preset,omitempty" json:"preset,omitempty"` // v2.5 — theme.presets reference
 	Label     string     `yaml:"label,omitempty" json:"label,omitempty"`
 	Icon      string     `yaml:"icon,omitempty" json:"icon,omitempty"`
@@ -70,16 +70,19 @@ type Connector struct {
 	// strokeGenerated marks a Stroke fabricated by a translator (the .d2 path
 	// copies d2's default edge color) rather than authored; theme application
 	// clears it so edges take the engine's neutral default. Never serialised.
-	strokeGenerated bool `yaml:"-" json:"-"`
-	From    string  `yaml:"from" json:"from"`
-	To      string  `yaml:"to" json:"to"`
-	Stroke  *Stroke `yaml:"stroke,omitempty" json:"stroke,omitempty"`
-	Arrow   string  `yaml:"arrow,omitempty" json:"arrow,omitempty"` // none | triangle (v1.4)
-	Label   string  `yaml:"label,omitempty" json:"label,omitempty"`
-	LabelBg string  `yaml:"labelBg,omitempty" json:"labelBg,omitempty"`
+	strokeGenerated bool    `yaml:"-" json:"-"`
+	From            string  `yaml:"from" json:"from"`
+	To              string  `yaml:"to" json:"to"`
+	Stroke          *Stroke `yaml:"stroke,omitempty" json:"stroke,omitempty"`
+	Arrow           string  `yaml:"arrow,omitempty" json:"arrow,omitempty"` // none | triangle (v1.4)
+	Label           string  `yaml:"label,omitempty" json:"label,omitempty"`
+	LabelBg         string  `yaml:"labelBg,omitempty" json:"labelBg,omitempty"`
 	// v3.1 — pill ink + size so dark scenes can run dim mid-route labels.
 	LabelColor    string  `yaml:"labelColor,omitempty" json:"labelColor,omitempty"`
 	LabelFontSize float64 `yaml:"labelFontSize,omitempty" json:"labelFontSize,omitempty"`
+	// Source Sans Pro binds the entire connector label to an embedded resource.
+	LabelFontFamily string `yaml:"labelFontFamily,omitempty" json:"labelFontFamily,omitempty"`
+	LabelFontWeight string `yaml:"labelFontWeight,omitempty" json:"labelFontWeight,omitempty"`
 	// v3.1 — elbow bias for the orthogonal router: xFirst | yFirst.
 	// Default picks the axis the source face exits along.
 	Elbow string `yaml:"elbow,omitempty" json:"elbow,omitempty"`
@@ -93,6 +96,10 @@ type Connector struct {
 	// shifting the whole line. When set, it supersedes Bend and the auto
 	// staircase; endpoints stay docked to their anchors.
 	Waypoints []WorldPoint `yaml:"waypoints,omitempty" json:"waypoints,omitempty"`
+	// Explicit world-space interior corners, including height. When present,
+	// this route supersedes the legacy ground-plane Waypoints and Bend for
+	// orthogonal routing. Other routing modes keep it inactive.
+	Waypoints3D []WorldPoint `yaml:"waypoints3d,omitempty" json:"waypoints3d,omitempty"`
 
 	// v1.5 — routing strategy:
 	//   "straight"    — single segment from anchor to anchor (default)
@@ -124,12 +131,12 @@ var (
 
 // CompositePart is one sub-element of a composite node.
 type CompositePart struct {
-	ID      string      `yaml:"id,omitempty" json:"id,omitempty"` // v1.4 — referenced by Connectors
-	Shape   string      `yaml:"shape" json:"shape"`
+	ID    string `yaml:"id,omitempty" json:"id,omitempty"` // v1.4 — referenced by Connectors
+	Shape string `yaml:"shape" json:"shape"`
 	// groupLabel marks the iso_text the lowering pass emits for a group's name
 	// (internal; never parsed). The occlusion pass repaints these last so an
 	// upper-layer node can't cover a lane label. Unexported → not serialised.
-	groupLabel bool      `yaml:"-" json:"-"`
+	groupLabel bool `yaml:"-" json:"-"`
 	// styleGenerated marks a Style fabricated by a translator (the .d2 path
 	// synthesises fill/stroke for every shape) rather than authored. Theme
 	// application may displace generated styles so the design system can own
@@ -139,16 +146,16 @@ type CompositePart struct {
 	// pass emits the label's <g> with data-part-id=labelFor (so clicking the
 	// caption selects/drags the parent group in Studio) WITHOUT registering it
 	// in the interaction model / connector anchor map. Unexported → not parsed.
-	labelFor string     `yaml:"-" json:"-"`
-	Geom    *Geom       `yaml:"geom,omitempty" json:"geom,omitempty"`
-	Style   *Style      `yaml:"style,omitempty" json:"style,omitempty"`
-	Preset  string      `yaml:"preset,omitempty" json:"preset,omitempty"` // v2.5 — theme.presets reference
+	labelFor string `yaml:"-" json:"-"`
+	Geom     *Geom  `yaml:"geom,omitempty" json:"geom,omitempty"`
+	Style    *Style `yaml:"style,omitempty" json:"style,omitempty"`
+	Preset   string `yaml:"preset,omitempty" json:"preset,omitempty"` // v2.5 — theme.presets reference
 	// Role is the part's SEMANTIC slot in the diagram — hero | tray | chip —
 	// which a theme maps to a complete look (theme.roles) and, when the part
 	// declares no geom, a sizing rhythm (theme.roleGeoms). Roles let a scene
 	// declare WHAT each part is while the theme decides HOW it looks, so the
 	// same topology re-skins coherently under any named theme.
-	Role string `yaml:"role,omitempty" json:"role,omitempty"`
+	Role    string      `yaml:"role,omitempty" json:"role,omitempty"`
 	Label   string      `yaml:"label,omitempty" json:"label,omitempty"`
 	Icon    string      `yaml:"icon,omitempty" json:"icon,omitempty"`
 	Content *Content    `yaml:"content,omitempty" json:"content,omitempty"`

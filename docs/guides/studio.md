@@ -26,12 +26,11 @@ a human can look at the result, point at a node, and say "make this
 one violet". Studio is that pointing device. It grew out of three
 design positions:
 
-1. **The original file is sacred.** Everything you edit in Studio is
-   an in-browser copy. The file on disk is never written — not on
-   re-render, not ever. Your edits persist as a local draft (per
-   absolute path) across reloads, with a one-click `revert`. Taking
-   changes home is explicit: `↓ YAML` (the edited source) or the
-   canvas exports.
+1. **Accepted source is the persistent document.** In `serve` mode,
+   accepted edits auto-save to the bound local file; external file changes
+   reload in the editor. A segment-drag preview does not change the editor
+   source, disk file or undo history. Static `topology.html` keeps a local
+   draft and requires a running server for direct manipulation.
 2. **Source and canvas are the same thing seen twice.** Hover a node
    or edge → its YAML block highlights and scrolls into view. Click it
    → the highlight pins (click again, or the empty canvas, to unpin).
@@ -61,13 +60,48 @@ never re-decides positions: every node sits where you put it, and you
 own the layout. (Until that first drag, the diagram is whatever the
 layout engine produced.)
 
+### Connect specific ports
+
+Hover a node to reveal its connection ports. Drag a port to another node;
+the target ports appear and the preview snaps to the nearest one. Release
+to create the connection. The selected displayed instance is retained,
+including an upper stack replica, and one undo removes the new edge.
+
+These gestures write explicit `port-left`, `port-back`, `port-right`, or
+`port-front` references with `orthogonal2` routing. They work in isometric
+and plan views; switching projection keeps the source reference. Fixed
+ports use the body contour in isometric view and footprint sides in plan
+view. Dashed port outlines mark the approximate array/rack envelope.
+Text-only parts retain legacy anchor behavior. Existing authored face
+anchors are not rewritten. Plan connection creation is supported; plan
+segment dragging is still pending.
+
 ### Move an edge — one segment at a time
 
-Drag a connector and only the **segment you grabbed** moves, along its
-perpendicular world axis; the segments on either side stretch to stay
-connected and the two endpoints stay docked to their nodes. Routes stay
-iso-axis-aligned (no stray diagonals). Drag different segments to shape
-a route independently — they compose, they don't all slide together.
+In isometric view, drag a visible segment or its circular handle. Horizontal
+legs move along their perpendicular world axis; vertical risers move in the
+XY plane. Heights and docked endpoints are preserved. Dragging an endpoint
+leg retains a short lead at the port. The saved `waypoints3d` field records
+absolute world coordinates, and subsequent edits preserve this 3-D intent.
+
+The server computes the complete preview. Release commits that exact result
+and creates one undo step; requests are coalesced so a late response cannot
+replace a newer preview. Escape, switching projection, changing the source,
+or losing window focus cancels the gesture. A failed request preserves the
+source and both undo and redo histories. Preview requests do not save files;
+the normal `serve` auto-save follows a successful commit.
+
+A transparent hit corridor keeps thin lines easy to grab without changing
+their visible width; it stays in the line’s painter layer. Handles appear
+only on mapped, uncovered portions of the actual path.
+Ambiguous projected overlaps are not independently editable. At a crossing or
+an equally close pair of segments, move the pointer along the intended segment
+until it is distinct; zooming in also helps separate close paths. Handles only
+appear where their own midpoint identifies a unique visible segment. Clipped
+away portions do not block editing the remaining path. A stale diagram
+must be rendered before editing its segments. Curved/straight edges retain
+bend editing, and plan segment dragging remains pending. Manual corners can
+still route through a body; this gesture does not promise obstacle avoidance.
 
 ### Cursors & affordances
 
@@ -184,18 +218,31 @@ point `isotopo serve` at the source. Exports still work.
 | `GET /` | Studio, freshly rendered from the file on disk |
 | `GET /topology.svg` | current render of the file on disk |
 | `GET /nodes/_index.html`, `/nodes/<id>.svg\|.yaml\|.html` | per-part gallery |
-| `POST /api/render?format=yaml` | render the posted source; returns `{"svg","issues"}` |
-| `POST /api/move?kind=node\|edge&…` | text-edit a node offset / edge waypoints in the posted source; returns `{"yaml","svg","issues"}` |
+| `POST /api/render?format=yaml` | render the posted source; returns `{"svg","issues","model","routes","screenLabels"}` |
+| `POST /api/move?kind=node\|edge&…` | text-edit a node offset / edge route in the posted source; add `segment=<index>` for a 3-D segment delta; returns `{"yaml","svg","issues","model","routes","screenLabels"}` |
 | `POST /api/fields?kind=node\|edge\|canvas&…` | the detail-editor schema for an element, with current values |
-| `POST /api/edit?kind=…&f=<json>` | apply detail-editor changes to the posted source; returns `{"yaml","svg","issues"}` |
-| `POST /api/op?op=add\|delete\|duplicate\|reparent&kind=node\|edge&…` | structural ops (add / delete / duplicate; `reparent&id=&target=` moves a node into a group or to root); returns `{"yaml","svg","issues"}` |
+| `POST /api/edit?kind=…&f=<json>` | apply detail-editor changes to the posted source; returns `{"yaml","svg","issues","model","routes","screenLabels"}` |
+| `POST /api/op?op=add\|delete\|duplicate\|reparent&kind=node\|edge&…` | structural ops (add / delete / duplicate; `reparent&id=&target=` moves a node into a group or to root); returns `{"yaml","svg","issues","model","routes","screenLabels"}` |
 | `GET /api/ping` | health |
 
-All write endpoints do comment-preserving text surgery on the YAML you
-POST — they never touch the file on disk. They are a thin HTTP layer over
+`screenLabels` comes from the same emission as `svg`; its record fields follow
+the [emitted scene contract](../reference/api.md#consume-the-emitted-scene).
+Studio uses the recorded pointer rectangles for bound-font label selection,
+applying each group's current screen transform so zoom, pan and live drag
+remain aligned. It caches the identity mapping per committed SVG. Unknown
+fonts, older servers and mismatched records retain the browser geometry
+fallback. An empty array means that this render has no isometric screen-label
+layer; switching projection clears prior records.
+
+The edit endpoints listed above do comment-preserving text surgery on the YAML
+you POST and leave the file on disk untouched. They are a thin HTTP layer over
 the stateless Go edit contract (`ApplyOp` / `EditOp` / `RenderSource`):
 an embedder building a non-HTTP UI (desktop, WASM) can call those
 directly instead of re-serializing JSON — see the **[API reference](../reference/api.md#direct-manipulation-editing-for-embedders)**.
+
+Studio separately uses `POST /api/save` to persist its current source, including
+automatic saving after a successful UI edit. Calling a render/edit endpoint
+alone does not invoke that save path.
 
 ## How it's built
 

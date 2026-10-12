@@ -18,7 +18,9 @@ package isotopo
 //
 //	wTunnel·tunnels + wCrossing·crossings   (3·T + 1·C, readability.go)
 //
-// strictly decreases AND the overall readability cost strictly decreases —
+// strictly decreases AND the overall readability cost strictly decreases,
+// without worsening any supported per-object/per-edge visual defect,
+// including missing/blocked measured labels —
 // otherwise the connector is rolled back to "orthogonal" untouched. A scene
 // whose defects the v2 router cannot improve therefore renders byte-for-byte
 // identically (conservative trigger: no defect → no action; no strict win →
@@ -48,7 +50,7 @@ func repairRouting(doc *Document, scene *Node) bool {
 	// orthogonal connector with no hand-authored route override (bend /
 	// waypoints — a user-dragged route is the user's call, never rerouted).
 	candidate := func(c *Connector) bool {
-		return c != nil && c.Routing == "orthogonal" && c.Bend == nil && len(c.Waypoints) == 0
+		return c != nil && c.Routing == "orthogonal" && c.Elbow == "" && c.Bend == nil && len(c.Waypoints) == 0 && len(c.Waypoints3D) == 0
 	}
 	any := false
 	for _, c := range scene.Connectors {
@@ -66,6 +68,7 @@ func repairRouting(doc *Document, scene *Node) bool {
 		return false // no crossing/tunnel anywhere — nothing to repair
 	}
 	baseCost := before.Cost
+	defectsBefore := sceneVisualDefects(scene, doc.Theme, doc.Canvas)
 	implicated := routingDefectConnectors(scene, doc.Theme, doc.Canvas)
 	changed, upgrades := false, 0
 	for ci := 0; ci < len(scene.Connectors) && upgrades < maxRoutingUpgradesPerRound; ci++ {
@@ -76,8 +79,13 @@ func repairRouting(doc *Document, scene *Node) bool {
 		c.Routing = "orthogonal2"
 		now := Readability(doc)
 		sum := routingDefectSum(now)
+		var nextDefects visualDefects
 		if sum < base-1e-9 && now.Cost < baseCost-1e-9 {
+			nextDefects = sceneVisualDefects(scene, doc.Theme, doc.Canvas)
+		}
+		if nextDefects != nil && nextDefects.noWorseThan(defectsBefore) {
 			base, baseCost = sum, now.Cost
+			defectsBefore = nextDefects
 			changed = true
 			upgrades++
 			if base <= 0 {

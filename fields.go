@@ -31,14 +31,14 @@ type Field struct {
 	Desc    string   `json:"desc"`  // one-line semantic description
 	Type    string   `json:"type"`  // text | number | color | icon | choice
 	Options []string `json:"options,omitempty"`
-	Group   string   `json:"group,omitempty"`  // section header in the modal
+	Group   string   `json:"group,omitempty"` // section header in the modal
 	// Collapsed marks the field's group as collapsed by default in the modal
 	// (read from the group's first field). Core groups stay open; advanced /
 	// rarely-touched groups (Position, Gradients, Border, Effects) fold away so
 	// the form has a clear primary→advanced hierarchy instead of one long dump.
-	Collapsed bool `json:"collapsed,omitempty"`
-	Inline    bool `json:"inline,omitempty"` // compact, laid out side-by-side
-	Value     string `json:"value"`          // current value, filled per request
+	Collapsed bool   `json:"collapsed,omitempty"`
+	Inline    bool   `json:"inline,omitempty"` // compact, laid out side-by-side
+	Value     string `json:"value"`            // current value, filled per request
 	// Eff is the EFFECTIVE resolved colour (theme→shape→preset cascade,
 	// gradients flattened to their start colour) for a color field whose own
 	// Value is empty — what the canvas actually shows. The form paints the
@@ -152,7 +152,7 @@ func faceFill(sub, base, gradTo, gradDir string) []Field {
 
 // reusable option sets for choice fields.
 var (
-	dashOpts   = []string{"", "6 4", "1 5"}                   // solid | dashed | dotted
+	dashOpts   = []string{"", "6 4", "1 5"} // solid | dashed | dotted
 	weightOpts = []string{"", "400", "500", "600", "700", "800"}
 	dirOpts    = []string{"", "down", "up", "left", "right", "diag"}
 	alignOpts  = []string{"", "start", "center", "end"}
@@ -371,6 +371,8 @@ func edgeSchema() []Field {
 		Field{Path: "labelColor", Label: "Text color", Type: "color", Inline: true},
 		Field{Path: "labelBg", Label: "Background", Type: "color", Inline: true},
 		Field{Path: "labelFontSize", Label: "Font size", Type: "number", Unit: "px", Inline: true},
+		Field{Path: "labelFontFamily", Label: "Font family", Desc: "Source Sans Pro embeds the font and measures the complete label", Type: "text"},
+		Field{Path: "labelFontWeight", Label: "Font weight", Type: "choice", Options: []string{"", "400", "600", "700"}, Inline: true},
 	)...)
 	return out
 }

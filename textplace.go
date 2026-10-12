@@ -10,7 +10,10 @@
 // placeTextBox is a pure function with its own unit suite.
 package isotopo
 
-import "math"
+import (
+	"math"
+	"sort"
+)
 
 // screenRect is an axis-aligned box in composite screen coords.
 type screenRect struct{ x0, y0, x1, y1 float64 }
@@ -150,7 +153,67 @@ func placeTextBox(boxW, boxH float64, anchor screenRect, prefX, prefY float64, s
 			}
 		}
 	}
-	return prefX, prefY
+	// The finite aesthetic candidates can all be blocked. Do not put the label
+	// back into a known collision: solve the forbidden intervals on four outward
+	// rays and choose the free result nearest the preferred position. For finite
+	// obstacles every ray has a free tail, without an arbitrary distance cap.
+	bestX, bestY, distance := prefX, prefY, math.Inf(1)
+	for _, d := range ordered {
+		x, y := anchor.cx()-boxW/2, anchor.cy()-boxH/2
+		switch {
+		case d.dy > 0:
+			y = anchor.y1 + 10
+		case d.dy < 0:
+			y = anchor.y0 - 10 - boxH
+		case d.dx > 0:
+			x = anchor.x1 + 10
+		default:
+			x = anchor.x0 - 10 - boxW
+		}
+		x, y = freeTextBoxOnRay(screenRect{x, y, x + boxW, y + boxH}, d.dx, d.dy, obstacles)
+		if delta := math.Hypot(x-prefX, y-prefY); delta < distance-1e-9 {
+			bestX, bestY, distance = x, y, delta
+		}
+	}
+	return bestX, bestY
+}
+
+// Each intersecting obstacle forbids an open interval of translations. Sorting
+// and merging intervals finds the first legal point, including narrow gaps
+// between distant obstacles. The small guard covers two-decimal SVG rounding.
+func freeTextBoxOnRay(box screenRect, dx, dy float64, obstacles []screenRect) (float64, float64) {
+	type interval struct{ lo, hi float64 }
+	var blocked []interval
+	for _, obstacle := range obstacles {
+		o := obstacle.inflate(textClearance + .02)
+		var lo, hi float64
+		if dy != 0 {
+			if box.x0 >= o.x1 || o.x0 >= box.x1 {
+				continue
+			}
+			lo, hi = o.y0-box.y1, o.y1-box.y0
+		} else {
+			if box.y0 >= o.y1 || o.y0 >= box.y1 {
+				continue
+			}
+			lo, hi = o.x0-box.x1, o.x1-box.x0
+		}
+		if dx < 0 || dy < 0 {
+			lo, hi = -hi, -lo
+		}
+		if hi > 0 {
+			blocked = append(blocked, interval{lo, hi})
+		}
+	}
+	sort.Slice(blocked, func(i, j int) bool { return blocked[i].lo < blocked[j].lo })
+	t := 0.0
+	for _, b := range blocked {
+		if t <= b.lo {
+			break
+		}
+		t = math.Max(t, b.hi)
+	}
+	return box.x0 + dx*t, box.y0 + dy*t
 }
 
 // leaderStart returns the point on the anchor silhouette's boundary

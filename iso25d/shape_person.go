@@ -80,6 +80,26 @@ func DefaultIsoPerson() IsoPersonOpts {
 	}
 }
 
+// personOrigin maps the body's world origin into the actual figure frame,
+// including head overlap and any horizontal expansion for a wide label.
+func personOrigin(o IsoPersonOpts) (float64, float64) {
+	m := o.Margin
+	if m <= 0 {
+		m = 24
+	}
+	halfWidth := math.Max(o.BodyWidth/2, o.HeadRadius)
+	if items := personCaption(o); len(items) > 0 {
+		x0, _, _, _ := captionBounds(items)
+		return math.Max(halfWidth, -x0) + m - (o.BodyWidth-o.BodyDepth)/2*cos30,
+			1.8*o.HeadRadius + m - (o.BodyWidth+o.BodyDepth)/2*sin30 + o.BodyHeight
+	}
+	if strings.TrimSpace(o.Label) != "" {
+		halfWidth = math.Max(halfWidth, textmetrics.TextPx(o.Label, o.FontSize, textmetrics.NarrowPersonLabel)/2)
+	}
+	return halfWidth + m - (o.BodyWidth-o.BodyDepth)/2*cos30,
+		1.8*o.HeadRadius + m - (o.BodyWidth+o.BodyDepth)/2*sin30 + o.BodyHeight
+}
+
 // RenderIsoPerson renders a friendly "user figure": a hemispherical
 // dome torso (no visible top ellipse — silhouette curves smoothly into
 // the head) capped with a sphere head that sinks slightly into the
@@ -107,6 +127,10 @@ func DefaultIsoPerson() IsoPersonOpts {
 //
 // HeadStyle "block" still works as a C4-style square head if requested.
 func RenderIsoPerson(o IsoPersonOpts) string {
+	return renderIsoPerson(o, nil)
+}
+
+func renderIsoPerson(o IsoPersonOpts, fonts fontResources) string {
 	rx := o.BodyWidth / 2
 	ry := rx * sin30 / cos30 // iso ellipse y-radius for the ground
 	h := o.BodyHeight        // dome height (apex to ground centre)
@@ -142,6 +166,12 @@ func RenderIsoPerson(o IsoPersonOpts) string {
 	maxX := math.Max(math.Max(rx, headR), labelW/2)
 	minY := headCy - headR
 	maxY := h + ry + labelH
+	caption := personCaption(o)
+	if len(caption) > 0 {
+		x0, _, x1, y1 := captionBounds(caption)
+		minX, maxX = math.Min(-math.Max(rx, headR), x0), math.Max(math.Max(rx, headR), x1)
+		maxY = math.Max(h+ry, y1)
+	}
 
 	W := (maxX - minX) + 2*m
 	H := (maxY - minY) + 2*m
@@ -296,7 +326,9 @@ func RenderIsoPerson(o IsoPersonOpts) string {
 	}
 
 	// Optional label — screen-space, one line under the figure.
-	if hasLabel {
+	if len(caption) > 0 {
+		writeBoundCaption(&sb, caption, sx(0), sy(0), o.FontColor, "label", fonts)
+	} else if hasLabel {
 		fmt.Fprintf(&sb,
 			`<text data-face="label" x="%.2f" y="%.2f" font-family="%s" font-size="%.2f" font-weight="%s" fill="%s" text-anchor="middle">%s</text>`,
 			sx(0), sy(h+ry)+labelGap+o.FontSize*0.85,

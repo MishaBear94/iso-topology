@@ -2,8 +2,9 @@ package isotopo
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
-	"regexp"
+	"io"
 	"strconv"
 	"strings"
 )
@@ -21,14 +22,9 @@ import (
 // connectors — which emit no data-route and used to be scored as the plan
 // view's simplified line — and decouples the evaluator from attribute
 // serialization. The legacy regex path is kept below (isoRealRoutes) as the
-// historical reference the parity tests pin the new path against.
+// historical reference the parity tests pin the new path against. Attributes
+// are parsed as XML so adding a clip or reordering metadata cannot erase routes.
 
-var reIsoRoute = regexp.MustCompile(`data-connector="(\d+)" data-from="[^"]*" data-to="[^"]*" data-route="([^"]*)"`)
-
-// isoRealRoutes (LEGACY, kept as the parity reference) renders the scene
-// isometrically and parses each connector's real WORLD route from its
-// data-route attribute, keyed by connector index. Straight-routed connectors
-// emit no data-route and are simply absent.
 // cloneSceneForEval deep-copies the parts (whose offsets/Layout applyLayout
 // mutates) and the node's own Layout, sharing the connector slice (untouched by
 // solving), so evaluating a scene never alters the caller's document.
@@ -45,6 +41,10 @@ func cloneSceneForEval(n *Node) *Node {
 	return &c
 }
 
+// isoRealRoutes (LEGACY, kept as the parity reference) renders the scene
+// isometrically and parses each connector's real WORLD route from its
+// data-route attribute, keyed by connector index. Straight-routed connectors
+// emit no data-route and are simply absent.
 func isoRealRoutes(n *Node, theme *Theme, canvas *Canvas) map[int][][2]float64 {
 	cv := &Canvas{}
 	if canvas != nil {
@@ -54,14 +54,39 @@ func isoRealRoutes(n *Node, theme *Theme, canvas *Canvas) map[int][][2]float64 {
 	cv.Projection = "iso" // force iso even if the document asked for top
 	svg := RenderWithCanvas(n, theme, cv, nil)
 
+	return isoRoutesFromSVG(svg)
+}
+
+func isoRoutesFromSVG(svg string) map[int][][2]float64 {
 	out := map[int][][2]float64{}
-	for _, m := range reIsoRoute.FindAllStringSubmatch(svg, -1) {
-		ci, err := strconv.Atoi(m[1])
+	dec := xml.NewDecoder(strings.NewReader(svg))
+	for {
+		token, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil // malformed output must not yield a partial route inventory
+		}
+		el, ok := token.(xml.StartElement)
+		if !ok || el.Name.Local != "path" {
+			continue
+		}
+		var index, route string
+		for _, attr := range el.Attr {
+			switch attr.Name.Local {
+			case "data-connector":
+				index = attr.Value
+			case "data-route":
+				route = attr.Value
+			}
+		}
+		ci, err := strconv.Atoi(index)
 		if err != nil {
 			continue
 		}
 		var pts [][2]float64
-		for _, corner := range strings.Fields(m[2]) {
+		for _, corner := range strings.Fields(route) {
 			f := strings.Split(corner, ",")
 			if len(f) != 4 {
 				continue
@@ -109,7 +134,7 @@ func isoCollectedRoutes(n *Node, theme *Theme, canvas *Canvas, orthoOnly bool) m
 		cv = &c
 	}
 	cv.Projection = "iso" // force iso even if the document asked for top
-	_, routes := RenderWithRouteInfo(n, theme, cv, nil)
+	_, routes := renderWithRouteInfo(n, theme, cv, nil, true)
 
 	out := map[int][][2]float64{}
 	for _, r := range routes {
@@ -177,6 +202,10 @@ func EvaluateIsoReport(n *Node, theme *Theme, canvas *Canvas) *IsoReport {
 // the parity tests can score the SAME scene through the legacy regex path,
 // the coverage-matched collector path, and the full collector path.
 func evaluateIsoWith(n *Node, theme *Theme, canvas *Canvas, src isoRouteSource) *IsoReport {
+	return evaluateIsoWithDefects(n, theme, canvas, src, nil)
+}
+
+func evaluateIsoWithDefects(n *Node, theme *Theme, canvas *Canvas, src isoRouteSource, defects visualDefects) *IsoReport {
 	// Evaluation must NOT mutate the caller's scene. buildPlanModel and the
 	// route renders both run applyLayout (which clears Layout/Place and writes
 	// Offsets) in place, so score a deep clone — otherwise callers like
@@ -207,7 +236,7 @@ func evaluateIsoWith(n *Node, theme *Theme, canvas *Canvas, src isoRouteSource) 
 			leaves = append(leaves, r)
 		}
 	}
-	rep := evalGeom(leaves, edges)
+	rep := evalGeomWithDefects(leaves, edges, defects)
 	// evalGeom's own overlap count IS the plan definition (leaf pairs only) —
 	// publish it under LeafNodeOverlaps before the iso-specific overwrite.
 	leafOverlaps := rep.NodeOverlaps
@@ -216,7 +245,11 @@ func evaluateIsoWith(n *Node, theme *Theme, canvas *Canvas, src isoRouteSource) 
 	// tray colliding with another tray (which leaf-only counting misses) is in R,
 	// matching validate and the eye. Parent/child pairs share an owner and don't
 	// count.
-	rep.NodeOverlaps = countTopLevelCollisions(n.Parts, rects)
+	pairs := topLevelCollisions(n.Parts, rects)
+	rep.NodeOverlaps = len(pairs)
+	for pair := range pairs {
+		defects.add(nodePairDefect("top-overlap", pair[0], pair[1]))
+	}
 	return &IsoReport{PlanReport: rep, LeafNodeOverlaps: leafOverlaps, BodyOcclusions: bodyOcc}
 }
 
@@ -224,6 +257,10 @@ func evaluateIsoWith(n *Node, theme *Theme, canvas *Canvas, src isoRouteSource) 
 // whose footprints collide (Z-aware), excluding parent/child. Footprint = the
 // part's own rect (a group's slab, or a leaf's box).
 func countTopLevelCollisions(topParts []*CompositePart, rects []planRect) int {
+	return len(topLevelCollisions(topParts, rects))
+}
+
+func topLevelCollisions(topParts []*CompositePart, rects []planRect) map[[2]string]bool {
 	descTop := map[string]string{}
 	var mark func(top string, p *CompositePart)
 	mark = func(top string, p *CompositePart) {
@@ -268,5 +305,5 @@ func countTopLevelCollisions(topParts []*CompositePart, rects []planRect) int {
 			seen[key] = true
 		}
 	}
-	return len(seen)
+	return seen
 }

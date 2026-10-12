@@ -79,11 +79,85 @@ text:
   boxBorder: "#1F2937"
 ```
 
-Top-face content is **adaptive by contract**: the icon is clamped so
-it can never overflow the face, and the label auto-wraps at word
-boundaries and auto-shrinks (down to 5px; CJK wraps by rune) so it
-never overflows either — `size` is a maximum, not a promise. Content
-that already fits renders exactly as authored.
+Adaptive top-face layouts estimate label widths, wrap at word boundaries,
+and may reduce the font down to 5px and shrink the icon to make room.
+For these layouts, `size` is an upper bound; content that already fits
+keeps its existing placement. When a long word must break, wrapping and
+last-line balancing preserve whole grapheme clusters, including combining
+accents and emoji sequences. Balancing never moves letters across an
+original word boundary.
+
+For system fonts, width estimates are not measurements of the selected font. Fixed
+face dimensions can still be too small at the minimum font size: an
+oversized cluster remains intact and may overflow. Increase the face size
+or use a screen-space caption when the text needs more room. Explicit icon
+anchors and offsets retain the author's placement instead of auto-fitting.
+
+Validation reports a warning when the final estimated content bounds exceed
+the preferred top-face padding budget. This may indicate lost breathing room
+even when the content is still inside the physical face. Render reports expose
+the final lines, font sizes, image viewports and affected sides as `content_fits`.
+An extremely small face retains a positive icon viewport inside the face when
+the padding itself is infeasible; that fallback still reports the unmet budget.
+An icon never grows merely because the label needs more space.
+
+For reproducible top-face or screen-label text, opt into the bundled Source Sans Pro font:
+
+```yaml
+style:
+  text: {family: "Source Sans Pro", weight: "600", size: 18}
+```
+
+The bounded top-face renderer embeds the same immutable font resource that
+it uses for shaping and fitting. Weights `400`/`normal`, `600`, and `700`/`bold`
+are supported; use the exact family name rather than a CSS fallback list.
+Latin, Greek, Cyrillic and supported punctuation/combining marks use shaped
+advances and ink bounds. Missing glyphs, other scripts and system-font
+fallback remain explicitly estimated in `content_fits`; this does not bind
+a CJK or emoji font. Sphere labels, free isometric text, connector labels and
+the separate top projection retain their existing measurement paths.
+
+For automatically positioned content whose entire label has bound metrics,
+the renderer tests rows and wrapped columns using actual glyph heights and
+ink gaps. It preserves an already feasible full-size layout; otherwise it
+prefers a larger feasible font, then a larger icon, then fewer layout items.
+The search has a bounded candidate budget and does not claim a globally
+optimal layout. Existing minimum-font and icon-reduction policies remain in
+force, with two-decimal SVG placement rounding. Explicit blank lines remain.
+Manual icon placement and unsupported-font labels retain their existing
+layout policy. When no tested layout satisfies the budget, the full text is
+retained and the unmet constraints are reported instead of hiding content.
+
+For bound text, `content_fits[].fit.gaps` also reports insufficient ink
+separation: adjacent visible lines prefer 0.12 em and icon/text boxes prefer
+4 local units along either axis. This can produce a warning even when no
+outer padding is exceeded. The icon box is its viewport; the measurement
+does not certify opaque pixels or readability after shrinking the diagram.
+
+With `orient: screen`, a label fully supported by the bound font uses its
+shaped widths and heights to size the chip, pointer hit rectangle and obstacle
+reservation together. Explicit newlines, blank lines and spaces are preserved;
+text remains at the requested size, rounded to two decimals for SVG. The chip
+keeps at least 8 horizontal and 5 vertical units around the ink, with extra
+height for tall marks or multiple lines. Bound-font chips also avoid their
+own projected body. Unknown-font or mixed fallback labels retain the existing
+estimated single-line layout; they are not certified as shaped blocks.
+
+Screen labels and annotation boxes first try the existing preferred and
+peripheral positions. If all fixed candidates collide, a bounded interval
+search along four outward rays finds a free position among finite obstacles.
+It uses the nearest such position to the preferred location, retaining the
+existing direction order for ties, and expands the export bounds as needed.
+Dense scenes can therefore place a label farther away; compact global label
+assignment and target-scale readability remain separate concerns.
+
+SVG text stays selectable and editable. A composite embeds each used font
+weight once; the full TTF resource adds about 330–340 KB per weight to the SVG.
+No network font request is needed. Built-in `Rasterize`/`snapshot` loads the
+same resource into resvg, or uses Chrome/Chromium when resvg is unavailable.
+ImageMagick delegates and external/custom rasterizers must be independently
+configured for embedded fonts; an explicit `ISOTOPO_RASTERIZER` keeps its
+existing two-argument contract. Default font selection is unchanged.
 
 `orient: iso` paints the label on the iso-tilted top face. `orient:
 screen` paints a horizontal label box BELOW the part's projected

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-
-	"github.com/MarkovWangRR/iso-topology/iso25d"
 )
 
 // planview.go renders a composite scene as a flat TOP-DOWN (plan) view —
@@ -34,11 +32,14 @@ type planRect struct {
 	w, d  float64
 	z, h  float64 // world z-floor + height — kept only so the evaluator can
 	// tell same-floor obstacles from things stacked above/below
-	fill      string
-	stroke    string
-	textColor string
-	container bool
-	boundary  bool // dashed outline-only container
+	fill           string
+	stroke         string
+	textColor      string
+	container      bool
+	boundary       bool // dashed outline-only container
+	family, weight string
+	fontSize       float64
+	parent         int // planCollect index; -1 for roots
 }
 
 // planEdge is one connector resolved to a world-space orthogonal route between
@@ -49,6 +50,8 @@ type planEdge struct {
 	c        *Connector
 	from, to planRect
 	pts      [][2]float64 // world route, source→target
+	refined  bool         // content-aware detours also contribute their ink to export bounds
+	framePts [][2]float64 // retain the baseline coordinate origin for fixed-port detours
 }
 
 // buildPlanModel resolves a scene to its flat geometry with the scorecard-
@@ -64,15 +67,33 @@ func buildPlanModel(n *Node, theme *Theme, canvas *Canvas) (rects []planRect, by
 // bends, length) against the nodes and the edges placed so far. The two modes
 // share everything else, so an A/B holds node positions fixed and varies only
 // the routing decision.
-func buildPlanModelOpt(n *Node, theme *Theme, canvas *Canvas, optimize bool) (rects []planRect, byID map[string]planRect, edges []planEdge) {
+func resolvedPlanGeometry(n *Node, theme *Theme, canvas *Canvas) (*Node, []planRect) {
+	n = resolvedLayout(n, canvas)
+	var rects []planRect
 	if n.Shape == "composite" {
-		applyLayout(n, canvas)
-		planCollect(n.Parts, 0, 0, 0, theme, &rects)
+		planCollect(n.Parts, 0, 0, 0, theme, &rects, n.GridStep)
 	} else {
 		st := ResolveStyleWithRole(theme, n.Shape, n.Role, n.Preset, n.Style)
 		w, d, h := planDims(n.Shape, n.Geom)
 		rects = append(rects, planRectFor(n.Label, n.Label, 0, 0, 0, w, d, h, n.Shape, st, false))
 	}
+	return n, rects
+}
+
+func buildPlanModelOpt(n *Node, theme *Theme, canvas *Canvas, optimize bool) (rects []planRect, byID map[string]planRect, edges []planEdge) {
+	p := resolvePlanScene(n, theme, canvas, optimize, false)
+	return p.rects, p.byID, p.edges
+}
+
+// Keep the original router available as the complete compatibility baseline.
+// Refinement only replaces fully verified automatic routes.
+func buildPlanModelBase(n *Node, theme *Theme, canvas *Canvas, optimize bool) (rects []planRect, byID map[string]planRect, edges []planEdge) {
+	n, rects = resolvedPlanGeometry(n, theme, canvas)
+	byID, edges = routePlanGeometry(n, rects, optimize)
+	return
+}
+
+func routePlanGeometry(n *Node, rects []planRect, optimize bool) (byID map[string]planRect, edges []planEdge) {
 	byID = map[string]planRect{}
 	var leaves []planRect
 	for _, r := range rects {
@@ -90,11 +111,31 @@ func buildPlanModelOpt(n *Node, theme *Theme, canvas *Canvas, optimize bool) (re
 		}
 		fr, okF := byID[connectorTarget(c.From)]
 		to, okT := byID[connectorTarget(c.To)]
+		// Plan collapses the displayed stack, but replica references still
+		// connect to that footprint instead of silently losing the edge.
+		if !okF {
+			fr, okF = byID[stackBase(connectorTarget(c.From))]
+		}
+		if !okT {
+			to, okT = byID[stackBase(connectorTarget(c.To))]
+		}
 		if !okF || !okT {
 			continue // dangling endpoint — Validate already flags it
 		}
 		var pts [][2]float64
 		switch {
+		case len(c.Waypoints3D) > 0 && (c.Routing == "orthogonal" || c.Routing == "orthogonal2"):
+			a, b := planConnectionPort(fr, to, c.From), planConnectionPort(to, fr, c.To)
+			path := [][3]float64{{a.WX, a.WY, 0}}
+			for _, wp := range c.Waypoints3D {
+				path = append(path, [3]float64{wp.WX, wp.WY, 0})
+			}
+			path = append(path, [3]float64{b.WX, b.WY, 0})
+			for _, p := range orthogonalThread3D(path) {
+				pts = append(pts, [2]float64{p[0], p[1]})
+			}
+		case isFixedPortRef(c.From) || isFixedPortRef(c.To):
+			pts = planFixedPortRoute(fr, to, c, leaves, placed)
 		case c.Routing == "straight":
 			// A straight connector renders as a direct line, so it must be
 			// SCORED as one — not the orthogonal staircase the router would pick.
@@ -138,6 +179,23 @@ func planRouteCandidates(fr, to planRect) [][][2]float64 {
 	for _, my := range []float64{(sy + ey) / 2, ey} { // y-first staircases
 		c = append(c, [][2]float64{{fcx, sy}, {fcx, my}, {tcx, my}, {tcx, ey}})
 	}
+	// Outward U-routes keep a real lead at both ports when the midpoint
+	// channels collapse or an obstacle blocks the direct corridor. In
+	// particular, equal-height nodes cannot safely detour along their own
+	// top/bottom borders using a zero-length terminal leg.
+	const lead = 12.0
+	for _, side := range []int{-1, 1} {
+		fy, ty, channel := fr.y, to.y, math.Min(fr.y, to.y)-lead
+		if side > 0 {
+			fy, ty, channel = fr.y+fr.d, to.y+to.d, math.Max(fr.y+fr.d, to.y+to.d)+lead
+		}
+		c = append(c, [][2]float64{{fcx, fy}, {fcx, channel}, {tcx, channel}, {tcx, ty}})
+		fx, tx, channel := fr.x, to.x, math.Min(fr.x, to.x)-lead
+		if side > 0 {
+			fx, tx, channel = fr.x+fr.w, to.x+to.w, math.Max(fr.x+fr.w, to.x+to.w)+lead
+		}
+		c = append(c, [][2]float64{{fx, fcy}, {channel, fcy}, {channel, tcy}, {tx, tcy}})
+	}
 	return c
 }
 
@@ -145,13 +203,53 @@ func planRouteCandidates(fr, to planRect) [][][2]float64 {
 // the node obstacles and the routes already placed this pass.
 func selectRoute(fr, to planRect, nodes []planRect, placed [][][2]float64) [][2]float64 {
 	best := planRoute(fr, to)
-	bestCost := routeCost(best, fr, to, nodes, placed)
+	bestCost := math.Inf(1)
+	if planAttachmentsValid(best, fr, to) {
+		bestCost = routeCost(best, fr, to, nodes, placed)
+	}
 	for _, cand := range planRouteCandidates(fr, to) {
+		if !planAttachmentsValid(cand, fr, to) {
+			continue
+		}
 		if cost := routeCost(cand, fr, to, nodes, placed); cost < bestCost {
 			best, bestCost = cand, cost
 		}
 	}
 	return best
+}
+
+// A route must leave and enter a face transversely. A zero terminal leg in a
+// flush candidate can otherwise win the bend score while placing the arrow
+// along the target's border, which visually loses the connection entirely.
+func planAttachmentsValid(pts [][2]float64, fr, to planRect) bool {
+	if len(pts) < 2 {
+		return false
+	}
+	outward := func(r planRect, p, q [2]float64) bool {
+		const eps = 1e-7
+		dx, dy := q[0]-p[0], q[1]-p[1]
+		if math.Abs(p[0]-r.x) < eps {
+			return dx < -eps && math.Abs(dy) < eps
+		}
+		if math.Abs(p[0]-(r.x+r.w)) < eps {
+			return dx > eps && math.Abs(dy) < eps
+		}
+		if math.Abs(p[1]-r.y) < eps {
+			return dy < -eps && math.Abs(dx) < eps
+		}
+		if math.Abs(p[1]-(r.y+r.d)) < eps {
+			return dy > eps && math.Abs(dx) < eps
+		}
+		return false
+	}
+	i, j := 1, len(pts)-2
+	for i < len(pts) && pts[i] == pts[0] {
+		i++
+	}
+	for j >= 0 && pts[j] == pts[len(pts)-1] {
+		j--
+	}
+	return i < len(pts) && j >= 0 && outward(fr, pts[0], pts[i]) && outward(to, pts[len(pts)-1], pts[j])
 }
 
 // routeCost is the per-edge slice of the scorecard: tunnelling a node is worst,
@@ -191,34 +289,38 @@ func RenderPlan(n *Node, theme *Theme, canvas *Canvas, _ []*Annotation) string {
 // renderPlan does the work; a non-nil report overlays its findings (crossings,
 // edges through nodes) in red on top of the diagram.
 func renderPlan(n *Node, theme *Theme, canvas *Canvas, hl *PlanReport) string {
+	return renderPlanObserved(n, theme, canvas, hl, nil)
+}
+
+func renderPlanObserved(n *Node, theme *Theme, canvas *Canvas, hl *PlanReport, labels *[]ConnectorLabelRecord, conflicts ...bool) string {
+	return renderPlanContentObserved(n, theme, canvas, hl, labels, nil, conflicts...)
+}
+
+func renderPlanContentObserved(n *Node, theme *Theme, canvas *Canvas, hl *PlanReport, labels *[]ConnectorLabelRecord, titles *[]PlanLabel, conflicts ...bool) string {
+	collectConflicts := labels != nil && len(conflicts) > 0 && conflicts[0]
 	if n == nil {
 		return ""
 	}
-	rects, _, edges := buildPlanModel(n, theme, canvas)
+	p := resolvePlanScene(n, theme, canvas, true, collectConflicts)
+	return renderResolvedPlan(p, canvas, hl, labels, titles)
+}
+
+func renderResolvedPlan(p *resolvedPlanScene, canvas *Canvas, hl *PlanReport, labels *[]ConnectorLabelRecord, titles *[]PlanLabel) string {
+	rects, edges := p.rects, p.edges
 	if len(rects) == 0 {
 		return ""
 	}
 
-	// World bbox over every footprint.
-	minX, minY := math.Inf(1), math.Inf(1)
-	maxX, maxY := math.Inf(-1), math.Inf(-1)
-	for _, r := range rects {
-		minX, minY = math.Min(minX, r.x), math.Min(minY, r.y)
-		maxX, maxY = math.Max(maxX, r.x+r.w), math.Max(maxY, r.y+r.d)
-	}
-	pad := planPad
-	if canvas != nil && canvas.Padding > 0 {
-		pad = canvas.Padding
-	}
-	tx := func(wx float64) float64 { return wx - minX + pad }
-	ty := func(wy float64) float64 { return wy - minY + pad }
-	W := (maxX - minX) + 2*pad
-	H := (maxY - minY) + 2*pad
+	ox, oy, W, H := p.ox, p.oy, p.width, p.height
+	tx := func(x float64) float64 { return x + ox }
+	ty := func(y float64) float64 { return y + oy }
+	content := p.layoutContent()
+	collectConflicts := p.details
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb,
-		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %.2f %.2f" width="%.2f" height="%.2f" font-family="Inter,system-ui,sans-serif">`,
-		W, H, W, H)
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %.2f %.2f" width="%.2f" height="%.2f" font-family="Inter,system-ui,sans-serif" data-projection="top" data-scene-tx="%.4f" data-scene-ty="%.4f">`,
+		W, H, W, H, tx(0), ty(0))
 
 	// Background + arrowhead marker.
 	bg := "#ffffff"
@@ -231,11 +333,16 @@ func renderPlan(n *Node, theme *Theme, canvas *Canvas, hl *PlanReport) string {
 	// light-halo pair stays legible on every background the route crosses —
 	// the iso author stroke colours, tuned for 3D faces, would vanish on one.
 	edgeInk := "#27364b"
-	edgeCasing := "#eef2f8"
 	fmt.Fprintf(&sb, `<rect x="0" y="0" width="%.2f" height="%.2f" fill="%s"/>`, W, H, planEsc(bg))
 	fmt.Fprintf(&sb, `<defs><marker id="planarrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="%s"/></marker></defs>`, edgeInk)
 
-	drawRect := func(r planRect) {
+	texts := content.texts
+	fonts := map[string]bool{}
+	drawRect := func(i int, r planRect) {
+		if r.id != "" {
+			fmt.Fprintf(&sb, `<g data-part-id="%s">`, planEsc(r.id))
+			defer sb.WriteString(`</g>`)
+		}
 		px, py := tx(r.x), ty(r.y)
 		fill := r.fill
 		dash := ""
@@ -247,6 +354,21 @@ func renderPlan(n *Node, theme *Theme, canvas *Canvas, hl *PlanReport) string {
 			`<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.1f" ry="%.1f" fill="%s" stroke="%s" stroke-width="%.1f"%s/>`,
 			px, py, r.w, r.d, planRadius, planRadius, planEsc(fill), planEsc(r.stroke), planLineW(r), dash)
 		if r.label == "" {
+			return
+		}
+		if titles != nil {
+			record := texts[i].record
+			// Routing gates need detailed conflicts even for a light preview.
+			// Preserve that internal proof without publishing report-only data.
+			if !collectConflicts && record.Placement != nil && len(record.Placement.Conflicts) > 0 {
+				placement := *record.Placement
+				placement.Conflicts = nil
+				record.Placement = &placement
+			}
+			*titles = append(*titles, record)
+		}
+		if texts[i].font != nil {
+			emitPlanLabel(&sb, texts[i], r.textColor, fonts)
 			return
 		}
 		if r.container {
@@ -264,83 +386,51 @@ func renderPlan(n *Node, theme *Theme, canvas *Canvas, hl *PlanReport) string {
 	// Paint order: substrates → connectors → leaf boxes → connector labels, so
 	// routes tuck BEHIND the node boxes (no lines crossing labels) while the
 	// pills stay on top. Containers come first in `rects` (planCollect order).
-	for _, r := range rects {
+	for i, r := range rects {
 		if r.container {
-			drawRect(r)
+			drawRect(i, r)
 		}
 	}
 
-	// Connectors: orthogonal face-to-face routes between footprints. Collect the
-	// label placements to emit after the leaf boxes.
-	type pill struct {
-		x, y, w        float64
-		bg, ink, label string
-	}
-	var pills []pill
 	for _, e := range edges {
-		c := e.c
-		stroke := edgeInk
-		casing := edgeCasing
-		if c.Stroke != nil && c.Stroke.Color != "" {
-			stroke = c.Stroke.Color
-			// keep the halo opposite the ink so a custom colour still pops.
-			if planIsDark(stroke) {
-				casing = "#f1f5f9"
-			} else {
-				casing = "#1e293b"
-			}
-		}
-		sw := 2.4 // bolder than iso hairlines so the flow reads at a glance
-		if c.Stroke != nil && c.Stroke.Width != nil && *c.Stroke.Width > 0 {
-			sw = *c.Stroke.Width
-		}
-		dash := ""
-		if c.Stroke != nil && c.Stroke.Dash == "dashed" {
-			dash = ` stroke-dasharray="6 5"`
-		} else if c.Stroke != nil && c.Stroke.Dash == "dotted" {
-			dash = ` stroke-dasharray="2 4"`
-		}
+		stroke, casing, sw, dash := planEdgeStyle(e.c)
 		path := planPathStr(e.pts, tx, ty)
-		mxw, myw := planMid(e.pts)
-		mx, my := tx(mxw), ty(myw)
 		head := ` marker-end="url(#planarrow)"`
-		if c.Arrow == "none" {
+		if e.c.Arrow == "none" {
 			head = ""
 		}
-		// Casing first (a wider halo, no arrow), then the ink line on top — the
-		// pair stays visible whether the segment runs over a light lane or a
-		// dark gap. Dashed lines skip the casing so the gaps read cleanly.
 		if dash == "" {
-			fmt.Fprintf(&sb,
-				`<path d="%s" fill="none" stroke="%s" stroke-width="%.2f" stroke-linecap="round" stroke-linejoin="round"/>`,
-				path, planEsc(casing), sw+3)
+			fmt.Fprintf(&sb, `<path d="%s" fill="none" stroke="%s" stroke-width="%.2f" stroke-linecap="round" stroke-linejoin="round"/>`, path, planEsc(casing), sw+3)
 		}
-		fmt.Fprintf(&sb,
-			`<path d="%s" fill="none" stroke="%s" stroke-width="%.2f" stroke-linecap="round" stroke-linejoin="round"%s%s/>`,
-			path, planEsc(stroke), sw, dash, head)
-		if c.Label != "" {
-			lblBg, lblInk := "#ffffff", "#334155"
-			if c.LabelBg != "" {
-				lblBg = c.LabelBg
-			}
-			if c.LabelColor != "" {
-				lblInk = c.LabelColor
-			}
-			wpx := 7.0*float64(len([]rune(c.Label))) + 10
-			pills = append(pills, pill{x: mx - wpx/2, y: my - 8, w: wpx, bg: lblBg, ink: lblInk, label: c.Label})
-		}
+		fmt.Fprintf(&sb, `<path d="%s" fill="none" stroke="%s" stroke-width="%.2f" stroke-linecap="round" stroke-linejoin="round"%s%s/>`, path, planEsc(stroke), sw, dash, head)
 	}
-
-	for _, r := range rects {
+	for i, r := range rects {
 		if !r.container {
-			drawRect(r)
+			drawRect(i, r)
 		}
 	}
-	for _, p := range pills {
-		fmt.Fprintf(&sb,
-			`<rect x="%.2f" y="%.2f" width="%.2f" height="16" rx="4" ry="4" fill="%s" stroke="#e2e8f0" stroke-width="1"/>`+
-				`<text x="%.2f" y="%.2f" font-size="10" text-anchor="middle" dominant-baseline="central" fill="%s">%s</text>`,
-			p.x, p.y, p.w, planEsc(p.bg), p.x+p.w/2, p.y+8, planEsc(p.ink), planEsc(p.label))
+	for _, p := range content.pills {
+		planLegacyPill(&sb, p)
+	}
+	measuredBounds := content.bounds
+	var measuredRecords []ConnectorLabelRecord
+	for i, req := range content.requests {
+		bg, ink := req.c.LabelBg, req.c.LabelColor
+		if bg == "" {
+			bg = "#ffffff"
+		}
+		if ink == "" {
+			ink = "#334155"
+		}
+		label := emitConnectorText(&sb, req, content.placements[i], bg, ink, fonts)
+		if content.hasTitleInk {
+			label.Typography.Scope += ",plan-title-ink-aabb"
+		}
+		measuredRecords = append(measuredRecords, ConnectorLabelRecord{req.index, label})
+		if labels != nil {
+			*labels = append(*labels, ConnectorLabelRecord{req.index, label})
+		}
+		measuredBounds = append(measuredBounds, connectorLabelRect(label))
 	}
 
 	// Evaluation overlay: redraw each through-node edge in red, then mark every
@@ -360,7 +450,17 @@ func renderPlan(n *Node, theme *Theme, canvas *Canvas, hl *PlanReport) string {
 	}
 
 	sb.WriteString(`</svg>`)
-	svg := sb.String()
+	svg := finishConnectorText(sb.String(), measuredRecords)
+	if collectConflicts {
+		observeConnectorTextConflicts(measuredRecords, content.targets, content.strokes)
+	}
+	if len(measuredBounds) > 0 {
+		// Let viewport growth resize the existing backdrop, including dark canvases.
+		svg = strings.Replace(svg, `<rect x="0" y="0"`, `<rect data-layer="canvas-bg" x="0" y="0"`, 1)
+	}
+	for _, r := range measuredBounds {
+		svg = growViewBoxAround(svg, minSvgRect{r.x0 - 16, r.y0 - 16, r.x1 + 16, r.y1 + 16})
+	}
 	ar := 16.0 / 10.0
 	if canvas != nil && canvas.AspectRatio != 0 {
 		ar = canvas.AspectRatio
@@ -372,48 +472,57 @@ func renderPlan(n *Node, theme *Theme, canvas *Canvas, hl *PlanReport) string {
 // corner (parent corner + own resolved offset). applyLayout has already filled
 // in computed footprints (auto-sized containers included) and parent-relative
 // offsets, so a plain accumulation is exact.
-func planCollect(parts []*CompositePart, ox, oy, oz float64, theme *Theme, out *[]planRect) {
+func planCollect(parts []*CompositePart, ox, oy, oz float64, theme *Theme, out *[]planRect, grid ...float64) {
+	gridStep := 0.0
+	if len(grid) > 0 {
+		gridStep = grid[0]
+	}
+	planCollectAt(parts, ox, oy, oz, theme, out, gridStep, -1)
+}
+
+func planCollectAt(parts []*CompositePart, ox, oy, oz float64, theme *Theme, out *[]planRect, gridStep float64, parent int) {
 	for _, p := range parts {
 		if p == nil {
 			continue
 		}
-		x, y, z := ox, oy, oz
-		if p.Offset != nil {
-			x += p.Offset.WX
-			y += p.Offset.WY
-			z += p.Offset.WZ
-		}
+		x, y, z := partLocalOffset(p, gridStep)
+		x, y, z = x+ox, y+oy, z+oz
 		w, d, h := planDims(p.Shape, p.Geom)
 		container := isContainerShape(p.Shape) || len(p.Parts) > 0
 		st := ResolveStyleWithRole(theme, p.Shape, p.Role, p.Preset, p.Style)
-		*out = append(*out, planRectFor(p.ID, p.Label, x, y, z, w, d, h, p.Shape, st, container))
+		i := len(*out)
+		r := planRectFor(p.ID, p.Label, x, y, z, w, d, h, p.Shape, st, container)
+		r.parent = parent
+		*out = append(*out, r)
 		if len(p.Parts) > 0 {
-			planCollect(p.Parts, x, y, z, theme, out)
+			childZ := z
+			if isContainerShape(p.Shape) {
+				childZ += groupSubstrateHeight(p)
+			}
+			planCollectAt(p.Parts, x, y, childZ, theme, out, gridStep, i)
 		}
 	}
 }
 
 func planDims(shape string, g *Geom) (w, d, h float64) {
-	w, d, h = 140, 140, 80
-	if g != nil {
-		if g.W > 0 {
-			w = g.W
-		}
-		if g.D > 0 {
-			d = g.D
-		}
-		if g.H > 0 {
-			h = g.H
-		}
-	}
-	// Clamp up to the rendered floor (e.g. cloud) so the plan view and the
-	// footprint-collision check measure the size that is actually drawn.
-	mw, md, mh := iso25d.ShapeMinDims(shape)
-	return math.Max(w, mw), math.Max(d, md), math.Max(h, mh)
+	return partDimensions(&CompositePart{Shape: shape, Geom: g})
 }
 
 func planRectFor(id, label string, x, y, z, w, d, h float64, shape string, st *Style, container bool) planRect {
-	r := planRect{id: id, label: label, x: x, y: y, z: z, w: w, d: d, h: h, container: container}
+	r := planRect{id: id, label: label, x: x, y: y, z: z, w: w, d: d, h: h, container: container, parent: -1}
+	r.fontSize, r.weight = planFontLabel, "400"
+	if container {
+		r.fontSize, r.weight = planFontTitle, "600"
+	}
+	if st != nil && st.Text != nil {
+		r.family = st.Text.Family
+		if st.Text.Weight != "" {
+			r.weight = st.Text.Weight
+		}
+		if st.Text.Size != nil {
+			r.fontSize = *st.Text.Size
+		}
+	}
 	r.boundary = shape == "boundary"
 	// Fill from the resolved top face (gradient → its start colour).
 	fill := "#cfd8e3"

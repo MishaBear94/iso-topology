@@ -47,11 +47,12 @@ func DefaultIsoSphere() IsoSphereOpts {
 }
 
 func RenderIsoSphere(o IsoSphereOpts) string {
+	return renderIsoSphere(o, nil)
+}
+
+func renderIsoSphere(o IsoSphereOpts, fonts fontResources) string {
 	r := o.Radius
-	m := o.Margin
-	W := 2*r + 2*m
-	H := 2*r + 2*m
-	cx, cy := r+m, r+m
+	cx, cy, W, H := sphereFrame(o)
 
 	var sb strings.Builder
 	sb.WriteString(svgHeader(W, H))
@@ -94,7 +95,9 @@ func RenderIsoSphere(o IsoSphereOpts) string {
 			escapeAttr(o.Icon), escapeAttr(o.Icon), cx-iconSize/2, iy, iconSize, iconSize,
 		)
 	}
-	if hasLabel {
+	if caption := sphereCaption(o); len(caption) > 0 {
+		writeBoundCaption(&sb, caption, cx, cy, o.FontColor, "", fonts)
+	} else if hasLabel {
 		ly := cy
 		if hasIcon {
 			ly = cy + o.FontSize*0.8

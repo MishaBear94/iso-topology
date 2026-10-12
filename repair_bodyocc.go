@@ -5,13 +5,9 @@ package isotopo
 // nearer body substantially covers is pushed along the projected separation
 // direction until the pair reads apart.
 //
-// Contract (the WS-G snapshot/restore pattern): every round is MEASURED. The
-// nudges are kept only when the total covered-silhouette fraction strictly
-// drops AND the scene's readability cost does not rise; otherwise every nudge
-// is rolled back and the pass reports no change. A scene this pass cannot
-// strictly improve therefore renders byte-for-byte as before — which is what
-// keeps every existing sample's repair output at zero change (the detection
-// threshold already sits above the whole shipped corpus, see the sweep test).
+// Each accepted candidate must reduce covered area without increasing cost
+// or any supported per-object/per-edge defect. Uncertain filled coverage
+// disables this automatic pass; a weighted score cannot prove such a move safe.
 
 const (
 	// bodyOccStep is one push in world units — one layout cell, the same
@@ -38,6 +34,12 @@ func repairBodyOcclusion(doc *Document, scene *Node) bool {
 	if len(occs) == 0 {
 		return false
 	}
+	clone := resolvedLayout(scene, doc.Canvas)
+	flat := lowerCompositeParts(clone.Parts, 0, 0, 0, clone.GridStep)
+	if occPaintRegions(flat, doc.Theme).uncertain {
+		return false
+	}
+	defectsBefore := sceneVisualDefects(scene, doc.Theme, doc.Canvas)
 	costBefore := Readability(doc).Cost
 	fracBefore := bodyOccTotalFrac(scene, doc.Theme, doc.Canvas)
 	saved := snapshotOffsetsDeep(scene.Parts)
@@ -74,7 +76,9 @@ func repairBodyOcclusion(doc *Document, scene *Node) bool {
 				act.Offset = &o
 			}
 			nudge(act, dx*bodyOccStep*k, dy*bodyOccStep*k)
-			if bodyOccTotalFrac(scene, doc.Theme, doc.Canvas) < cur-1e-9 {
+			if bodyOccTotalFrac(scene, doc.Theme, doc.Canvas) < cur-1e-9 &&
+				Readability(doc).Cost <= costBefore+1e-9 &&
+				sceneVisualDefects(scene, doc.Theme, doc.Canvas).noWorseThan(defectsBefore) {
 				improved = true
 				break
 			}
@@ -91,7 +95,8 @@ func repairBodyOcclusion(doc *Document, scene *Node) bool {
 	}
 
 	fracAfter := bodyOccTotalFrac(scene, doc.Theme, doc.Canvas)
-	if fracAfter >= fracBefore-1e-9 || Readability(doc).Cost > costBefore+1e-9 {
+	if fracAfter >= fracBefore-1e-9 || Readability(doc).Cost > costBefore+1e-9 ||
+		!sceneVisualDefects(scene, doc.Theme, doc.Canvas).noWorseThan(defectsBefore) {
 		restoreOffsetsDeep(scene.Parts, saved)
 		return false
 	}
@@ -99,9 +104,9 @@ func repairBodyOcclusion(doc *Document, scene *Node) bool {
 }
 
 // bodyOccTotalFrac is the progress measure: the sum of covered-silhouette
-// fractions over every pair above the measurement floor. Strictly monotone
-// under a separating push, so the acceptance test can see sub-threshold
-// progress that a bare defect COUNT would miss.
+// fractions over every pair above the measurement floor. Measuring each
+// candidate reveals sub-threshold progress that a bare defect COUNT misses;
+// the separate defect gate prevents trading it for a different visible fault.
 func bodyOccTotalFrac(scene *Node, theme *Theme, canvas *Canvas) float64 {
 	total := 0.0
 	for _, oc := range bodyOcclusionsInNode(scene, theme, canvas, bodyOccMeasureFloor) {
@@ -110,8 +115,8 @@ func bodyOccTotalFrac(scene *Node, theme *Theme, canvas *Canvas) float64 {
 	return total
 }
 
-// bodyOccPushDir maps the screen-space separation vector (centroid(hidden) −
-// centroid(occluder)) onto the world axis direction whose projection best
+// bodyOccPushDir maps the screen-space separation vector (bounds centre of
+// hidden minus bounds centre of occluder) onto the world axis direction whose projection best
 // aligns with it — the world push that most directly pulls the buried node out
 // from behind its occluder. Ties resolve to the first candidate (+x), so the
 // result is deterministic even for a zero separation.

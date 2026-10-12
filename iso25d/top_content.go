@@ -1,9 +1,6 @@
-// Top-face content fitting — the adaptive layout contract for icons
-// and labels: an icon must NEVER overflow the top face, and a label
-// must never overflow either — long text auto-wraps to the face width
-// and, when wrapping alone can't save it, the font auto-shrinks (and
-// finally the icon yields height). Pure functions, unit-tested in
-// top_content_test.go.
+// Top-face content fitting uses estimated text widths to wrap labels,
+// shrink fonts and yield icon space. Fixed face dimensions can still be
+// infeasible at the font floor; preserving text takes priority over fitting.
 package iso25d
 
 import (
@@ -11,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/MarkovWangRR/iso-topology/textmetrics"
+	"github.com/rivo/uniseg"
 )
 
 const (
@@ -44,6 +42,8 @@ func runeWidth(r rune) float64 {
 	return textmetrics.RuneEm(r, textmetrics.NarrowTopFace)
 }
 
+type textWidth func(string, float64) float64
+
 func lineWidth(line string, fs float64) float64 {
 	w := 0.0
 	for _, r := range line {
@@ -52,69 +52,127 @@ func lineWidth(line string, fs float64) float64 {
 	return w * fs
 }
 
-// wrapLine greedily wraps one logical line to maxW at fs. Splits on
-// spaces when possible; a single over-long word (or spaceless CJK run)
-// falls back to rune-level wrapping. Never returns an empty slice.
-func wrapLine(line string, fs, maxW float64) []string {
+// textClusters preserves user-perceived characters during emergency wrapping.
+// Cluster segmentation is not font measurement: retain the existing advance
+// estimate instead of treating every cluster as one glyph or one em.
+func textClusters(s string) []string {
+	var out []string
+	state := -1
+	for s != "" {
+		var cluster string
+		cluster, s, _, state = uniseg.FirstGraphemeClusterInString(s, state)
+		out = append(out, cluster)
+	}
+	return out
+}
+
+// wrapWords retains the existing ASCII-space word policy, but a space with
+// attached combining marks is part of its cluster, not a removable separator.
+func wrapWords(line string) []string {
+	if !strings.Contains(line, " ") {
+		return []string{line}
+	}
+	var words []string
+	start, offset := 0, 0
+	rest, state := line, -1
+	for rest != "" {
+		var cluster string
+		cluster, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
+		if cluster == " " {
+			words = append(words, line[start:offset])
+			start = offset + 1
+		}
+		offset += len(cluster)
+	}
+	return append(words, line[start:])
+}
+
+// wrapLine greedily wraps one logical line to maxW at fs. Splits on spaces
+// when possible; an over-long word falls back to grapheme clusters. A single
+// cluster wider than maxW remains intact, even when it cannot fit. Never
+// returns an empty slice. This is not a full Unicode line-breaking algorithm.
+func wrapLine(line string, fs, maxW float64, metrics ...textWidth) []string {
+	lineWidth := lineWidth
+	if len(metrics) > 0 && metrics[0] != nil {
+		lineWidth = metrics[0]
+	}
 	if lineWidth(line, fs) <= maxW {
 		return []string{line}
 	}
 	var out []string
+	var splitWordAfter []bool
 	var cur strings.Builder
 	curW := 0.0
-	flush := func() {
+	flush := func(splitWord bool) {
 		if cur.Len() > 0 {
 			out = append(out, cur.String())
+			splitWordAfter = append(splitWordAfter, splitWord)
 			cur.Reset()
 			curW = 0
 		}
 	}
-	for _, word := range strings.Split(line, " ") {
+	for _, word := range wrapWords(line) {
 		wW := lineWidth(word, fs)
 		spaceW := 0.0
 		if cur.Len() > 0 {
-			spaceW = 0.58 * fs
+			spaceW = lineWidth(" ", fs)
+		}
+		candidateW := curW + spaceW + wW
+		if len(metrics) > 0 && metrics[0] != nil {
+			candidate := word
+			if cur.Len() > 0 {
+				candidate = cur.String() + " " + word
+			}
+			candidateW = lineWidth(candidate, fs)
 		}
 		switch {
-		case curW+spaceW+wW <= maxW:
+		case candidateW <= maxW:
 			if cur.Len() > 0 {
 				cur.WriteByte(' ')
 				curW += spaceW
 			}
 			cur.WriteString(word)
-			curW += wW
+			curW = candidateW
 		case wW <= maxW:
-			flush()
+			flush(false)
 			cur.WriteString(word)
 			curW = wW
 		default:
-			// Rune-level fallback for one over-long word.
-			flush()
-			for _, r := range word {
-				rW := runeWidth(r) * fs
-				if curW+rW > maxW {
-					flush()
+			// Emergency breaks must not split accents, emoji or joiners.
+			flush(false)
+			for _, cluster := range textClusters(word) {
+				width := lineWidth(cluster, fs)
+				nextW := curW + width
+				if len(metrics) > 0 && metrics[0] != nil {
+					nextW = lineWidth(cur.String()+cluster, fs)
 				}
-				cur.WriteRune(r)
-				curW += rW
+				if nextW > maxW {
+					flush(true)
+				}
+				cur.WriteString(cluster)
+				if len(metrics) > 0 && metrics[0] != nil {
+					curW = lineWidth(cur.String(), fs)
+				} else {
+					curW += width
+				}
 			}
-			flush()
+			flush(false)
 		}
 	}
-	flush()
+	flush(false)
 	if len(out) == 0 {
 		return []string{line}
 	}
-	// v3.0 widow control: rune-level (CJK) wrapping can strand a single
-	// character on the last line (实时动态信息 / 流). Pull one rune down
-	// from the previous line when doing so still fits the width budget.
-	if n := len(out); n >= 2 {
-		last := []rune(out[n-1])
-		prev := []rune(out[n-2])
+	// Rebalance a stranded cluster only across an emergency break inside
+	// the same word. Crossing a word boundary would turn "abc d" into
+	// "ab / cd", changing which letters belong to the author's words.
+	if n := len(out); n >= 2 && splitWordAfter[n-2] {
+		last := textClusters(out[n-1])
+		prev := textClusters(out[n-2])
 		if len(last) == 1 && len(prev) >= 3 {
-			cand := string(prev[len(prev)-1]) + string(last)
+			cand := prev[len(prev)-1] + last[0]
 			if lineWidth(cand, fs) <= maxW {
-				out[n-2] = string(prev[:len(prev)-1])
+				out[n-2] = strings.Join(prev[:len(prev)-1], "")
 				out[n-1] = cand
 			}
 		}
@@ -123,12 +181,17 @@ func wrapLine(line string, fs, maxW float64) []string {
 }
 
 // longestUnbreakable returns the widest unit that word-boundary
-// wrapping cannot split: a whole ASCII word, or a single rune for CJK
-// runs (rune-level breaking is typographically fine there).
-func longestUnbreakable(lines []string, fs float64) float64 {
+// wrapping prefers not to split: a whole narrow-script word, or a grapheme
+// cluster for wide-script runs. Emergency wrapping may split a narrow word
+// at the font floor, but it must still preserve each cluster.
+func longestUnbreakable(lines []string, fs float64, metrics ...textWidth) float64 {
+	lineWidth := lineWidth
+	if len(metrics) > 0 && metrics[0] != nil {
+		lineWidth = metrics[0]
+	}
 	w := 0.0
 	for _, line := range lines {
-		for _, word := range strings.Split(line, " ") {
+		for _, word := range wrapWords(line) {
 			cjk := false
 			for _, r := range word {
 				if r >= 0x2E80 {
@@ -137,7 +200,9 @@ func longestUnbreakable(lines []string, fs float64) float64 {
 				}
 			}
 			if cjk {
-				w = math.Max(w, 1.0*fs)
+				for _, cluster := range textClusters(word) {
+					w = math.Max(w, lineWidth(cluster, fs))
+				}
 			} else {
 				w = math.Max(w, lineWidth(word, fs))
 			}
@@ -146,15 +211,19 @@ func longestUnbreakable(lines []string, fs float64) float64 {
 	return w
 }
 
-func wrapAll(lines []string, fs, maxW float64) []string {
+func wrapAll(lines []string, fs, maxW float64, metrics ...textWidth) []string {
 	var out []string
 	for _, l := range lines {
-		out = append(out, wrapLine(l, fs, maxW)...)
+		out = append(out, wrapLine(l, fs, maxW, metrics...)...)
 	}
 	return out
 }
 
-func widestLine(lines []string, fs float64) float64 {
+func widestLine(lines []string, fs float64, metrics ...textWidth) float64 {
+	lineWidth := lineWidth
+	if len(metrics) > 0 && metrics[0] != nil {
+		lineWidth = metrics[0]
+	}
 	w := 0.0
 	for _, l := range lines {
 		w = math.Max(w, lineWidth(l, fs))
@@ -165,11 +234,12 @@ func widestLine(lines []string, fs float64) float64 {
 // fitTopContent decides whether the legacy geometry already keeps the
 // content inside the face (Adjusted=false → caller renders the old
 // way, byte-identical), and otherwise wraps text, shrinks the font,
-// and finally shrinks the icon until the block fits with padding.
+// and finally shrinks the icon toward fitting with padding. An intact cluster
+// or a large number of lines can remain too large at the font floor.
 //
 // hasIcon/iconScale describe the icon; lines is the label split on
 // explicit "\n" (empty slice = no label).
-func fitTopContent(faceW, faceD float64, lines []string, hasIcon bool, iconScale, fontSize float64) topFit {
+func fitTopContent(faceW, faceD float64, lines []string, hasIcon bool, iconScale, fontSize float64, metrics ...textWidth) topFit {
 	if iconScale <= 0 {
 		iconScale = 0.4
 	}
@@ -192,7 +262,7 @@ func fitTopContent(faceW, faceD float64, lines []string, hasIcon bool, iconScale
 		if !hasLabel {
 			return true
 		}
-		if widestLine(lines, fs) > availW {
+		if widestLine(lines, fs, metrics...) > availW {
 			return false
 		}
 		n := float64(len(lines))
@@ -218,9 +288,16 @@ func fitTopContent(faceW, faceD float64, lines []string, hasIcon bool, iconScale
 
 	// ── adaptive path: wrap → shrink font → shrink icon ──
 	if hasIcon {
-		iconSize = math.Min(iconSize, math.Min(availW, availH))
+		limit := math.Min(availW, availH)
+		if limit <= 0 {
+			// The preferred padding itself is infeasible. Retain a visible
+			// icon within the face instead of emitting a negative/zero image.
+			limit = math.Max(0, math.Min(faceW, faceD))
+		}
+		iconSize = math.Min(iconSize, limit)
 	}
 	var wrapped []string
+	wrappedFontSize := -1.0
 	blockH := func() float64 {
 		h := float64(len(wrapped)) * fs * lineHeightK
 		if hasIcon {
@@ -231,41 +308,59 @@ func fitTopContent(faceW, faceD float64, lines []string, hasIcon bool, iconScale
 		}
 		return h
 	}
+	unit := 0.0
+	if hasLabel && fs > minAutoFontSize {
+		unit = longestUnbreakable(lines, 1.0, metrics...)
+	}
 	for i := 0; i < 24; i++ {
 		// Shrink BEFORE wrapping while an unbreakable unit (a whole
-		// ASCII word) can't fit the width — breaking a word mid-rune
+		// ASCII word) can't fit the width — breaking a word internally
 		// is the last resort, not the first. Width scales linearly
 		// with the font, so solve for the exact size in one step.
 		if hasLabel && fs > minAutoFontSize {
 			// 0.01 tolerance + 0.999 safety factor keep the exact
 			// solve from oscillating on float round-trip.
-			if unit := longestUnbreakable(lines, 1.0); unit*fs > availW+0.01 {
+			if unit > 0 && unit*fs > availW+0.01 {
 				fs = math.Max(minAutoFontSize, availW/unit*0.999)
 				continue
 			}
 		}
 		wrapped = nil
 		if hasLabel {
-			wrapped = wrapAll(lines, fs, availW)
+			wrapped = wrapAll(lines, fs, availW, metrics...)
+			wrappedFontSize = fs
 		}
-		if widestLine(wrapped, fs) <= availW && blockH() <= availH {
+		if widestLine(wrapped, fs, metrics...) <= availW && blockH() <= availH {
 			break
 		}
-		if fs > minAutoFontSize {
+		if hasLabel && fs > minAutoFontSize {
 			fs = math.Max(minAutoFontSize, fs*0.9)
 			continue
 		}
 		// Font at floor: the icon yields the remaining height.
 		if hasIcon {
-			textH := float64(len(wrapped))*fs*lineHeightK + iconLabelGap
-			iconSize = math.Max(8, availH-textH)
+			textH := float64(len(wrapped)) * fs * lineHeightK
+			if hasLabel {
+				textH += iconLabelGap
+			}
+			// An icon already smaller than the historical 8-unit floor must
+			// never grow in response to a shortage of space.
+			iconSize = math.Min(iconSize, math.Max(math.Min(8, iconSize), availH-textH))
 		}
 		break
+	}
+	// The iteration budget may end immediately after reducing the font.
+	// Resolve the final lines at the font that will actually be emitted.
+	if hasLabel && wrappedFontSize != fs {
+		wrapped = wrapAll(lines, fs, availW, metrics...)
 	}
 
 	// Centre the block vertically inside the padded face.
 	bh := blockH()
 	top := pad + math.Max(0, (availH-bh)/2)
+	if availH <= 0 {
+		top = math.Max(0, (faceD-bh)/2)
+	}
 	fit := topFit{Adjusted: true, Lines: wrapped, FontSize: fs, IconSize: iconSize}
 	if hasIcon {
 		fit.IconTop = top

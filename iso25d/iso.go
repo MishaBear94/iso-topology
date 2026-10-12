@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/MarkovWangRR/iso-topology/textmetrics"
 )
 
 // IsoBoxOpts captures every customisable parameter the POC exposes.
@@ -406,8 +408,12 @@ func writeTopLabelAndIcon(
 // When CornerRadius > 0 the box becomes a single rounded silhouette via
 // RenderIsoBoxRounded — see that fn for the cushion-badge look.
 func RenderIsoBox(o IsoBoxOpts) string {
+	return renderIsoBox(o, nil)
+}
+
+func renderIsoBox(o IsoBoxOpts, fonts fontResources) string {
 	if o.CornerRadius > 0 {
-		return RenderIsoBoxRounded(o)
+		return renderIsoBoxRounded(o, fonts)
 	}
 	g := computeBoxGeom(o.Width, o.Depth, o.Height, o.Margin)
 
@@ -488,6 +494,7 @@ func RenderIsoBox(o IsoBoxOpts) string {
 			g.E[0], g.E[1], o.Width, o.Depth,
 			o.Label, o.LabelLines, o.Icon, o.IconScale, o.IconAnchor, o.IconOffX, o.IconOffY,
 			o.FontFamily, o.FontSize, o.FontWeight, o.FontColor,
+			fonts,
 		)
 	}
 
@@ -601,110 +608,33 @@ func writeTopLabelAndIconV12(
 	label string, labelLines []string,
 	icon string, iconScale float64, iconAnchor string, iconOffX, iconOffY float64,
 	fontFamily string, fontSize float64, fontWeight, fontColor string,
+	fonts fontResources,
 ) {
-	lines := labelLines
-	if len(lines) == 0 && strings.Contains(label, "\n") {
-		lines = strings.Split(label, "\n")
-	}
-	hasIcon := strings.TrimSpace(icon) != ""
-	hasLabel := strings.TrimSpace(label) != "" || len(lines) > 1
-
-	if !hasLabel && !hasIcon {
+	font := textmetrics.ResolveBuiltin(fontFamily, fontWeight)
+	items := layoutTopContentFont(faceW, faceD, label, labelLines, icon, iconScale, iconAnchor, iconOffX, iconOffY, fontSize, font)
+	if len(items) == 0 {
 		return
 	}
-	if iconScale <= 0 {
-		iconScale = defaultIconScale
-	}
-	if !hasLabel && iconScale <= defaultIconScale {
-		iconScale = defaultIconOnlyScale // no text sharing the face → larger logo
-	}
-
-	// v2.7 — adaptive fit: icons must never overflow the top face;
-	// labels wrap and shrink to stay inside. Author-positioned icons
-	// (explicit anchor/offset) opt out of the adaptive path. When the
-	// legacy geometry already fits, fitTopContent reports
-	// Adjusted=false and the original math below runs verbatim.
-	if hasLabel && len(lines) == 0 {
-		lines = []string{label}
-	}
-	if hasIcon && (iconAnchor != "" || iconOffX != 0 || iconOffY != 0) {
-		// legacy path only
-	} else if fit := fitTopContent(faceW, faceD, lines, hasIcon, iconScale, fontSize); fit.Adjusted {
-		fmt.Fprintf(sb, `<g data-face="top-content" transform="%s">`, topContentTransform(originX, originY))
-		if hasIcon {
-			fmt.Fprintf(sb,
-				`<image href="%s" xlink:href="%s" x="%.2f" y="%.2f" width="%.2f" height="%.2f" preserveAspectRatio="xMidYMid meet"/>`,
-				escapeAttr(icon), escapeAttr(icon), (faceW-fit.IconSize)/2, fit.IconTop, fit.IconSize, fit.IconSize,
-			)
-		}
-		for i, ln := range fit.Lines {
-			fmt.Fprintf(sb,
-				`<text x="%.2f" y="%.2f" dy=".35em" font-family="%s" font-size="%.2f" font-weight="%s" fill="%s" text-anchor="middle">%s</text>`,
-				faceW/2, fit.FirstLineY+float64(i)*fit.FontSize*lineHeightK,
-				escapeAttr(fontFamily), fit.FontSize, escapeAttr(fontWeight),
-				escapeAttr(fontColor), escapeXML(ln),
-			)
-		}
-		sb.WriteString(`</g>`)
-		return
-	}
-	hasMulti := len(lines) > 1
-
-	fmt.Fprintf(sb, `<g data-face="top-content" transform="%s">`, topContentTransform(originX, originY))
-
-	// v2.3 — icon + label together on the top face: treat them as one
-	// vertically-centred block (icon above, text below) instead of
-	// pinning the icon at the face centre and hanging the text past it.
-	blockLift := 0.0
-	if hasIcon && hasLabel && iconAnchor == "" {
-		nLines := 1
-		if hasMulti {
-			nLines = len(lines)
-		}
-		blockLift = (fontSize*1.2*float64(nLines) + 4) / 2
-	}
-
-	if hasIcon {
-		iconSize := math.Min(faceW, faceD) * iconScale
-		// Anchor + offset (offset is fraction of face dim).
-		ix, iy := iconAnchorXY(iconAnchor, faceW, faceD, iconSize)
-		ix += iconOffX * faceW
-		iy += iconOffY*faceD - blockLift
-		fmt.Fprintf(sb,
-			`<image href="%s" xlink:href="%s" x="%.2f" y="%.2f" width="%.2f" height="%.2f" preserveAspectRatio="xMidYMid meet"/>`,
-			escapeAttr(icon), escapeAttr(icon), ix, iy, iconSize, iconSize,
-		)
-	}
-	if hasLabel {
-		lx := faceW / 2
-		ly := faceD * 0.5
-		if hasIcon && iconAnchor == "" {
-			ly = faceD*0.5 + math.Min(faceW, faceD)*iconScale*0.5 + fontSize*0.7 + 3 - blockLift
-		}
-		if hasMulti {
-			// Centre the block of lines vertically around ly.
-			lineH := fontSize * 1.2
-			start := ly - (float64(len(lines)-1) * lineH / 2)
-			for i, ln := range lines {
-				fmt.Fprintf(sb,
-					`<text x="%.2f" y="%.2f" dy=".35em" font-family="%s" font-size="%.2f" font-weight="%s" fill="%s" text-anchor="middle">%s</text>`,
-					lx, start+float64(i)*lineH,
-					escapeAttr(fontFamily), fontSize, escapeAttr(fontWeight),
-					escapeAttr(fontColor),
-					escapeXML(ln),
-				)
+	if font != nil {
+		for _, p := range items {
+			if !p.Icon && strings.TrimSpace(p.Text) != "" {
+				sb.WriteString(fonts.css(font))
+				break
 			}
-		} else {
-			fmt.Fprintf(sb,
-				`<text x="%.2f" y="%.2f" dy=".35em" font-family="%s" font-size="%.2f" font-weight="%s" fill="%s" text-anchor="middle">%s</text>`,
-				lx, ly,
-				escapeAttr(fontFamily), fontSize, escapeAttr(fontWeight),
-				escapeAttr(fontColor),
-				escapeXML(label),
-			)
 		}
 	}
-
+	fmt.Fprintf(sb, `<g data-face="top-content" transform="%s">`, topContentTransform(originX, originY))
+	for _, p := range items {
+		if p.Icon {
+			fmt.Fprintf(sb, `<image href="%s" xlink:href="%s" x="%.2f" y="%.2f" width="%.2f" height="%.2f" preserveAspectRatio="xMidYMid meet"/>`, escapeAttr(icon), escapeAttr(icon), p.X, p.Y, p.W, p.H)
+		} else {
+			if font != nil {
+				fmt.Fprintf(sb, `<text x="%.2f" y="%.2f" dy=".35em" font-family="Source Sans Pro" font-size="%.2f" font-weight="%s" fill="%s" text-anchor="middle" xml:space="preserve" xml:lang="en" lang="en" style="white-space:pre;font-kerning:normal;font-variant-ligatures:normal">%s</text>`, p.X, p.Y, p.FontSize, font.Weight(), escapeAttr(fontColor), escapeXML(p.Text))
+				continue
+			}
+			fmt.Fprintf(sb, `<text x="%.2f" y="%.2f" dy=".35em" font-family="%s" font-size="%.2f" font-weight="%s" fill="%s" text-anchor="middle">%s</text>`, p.X, p.Y, escapeAttr(fontFamily), p.FontSize, escapeAttr(fontWeight), escapeAttr(fontColor), escapeXML(p.Text))
+		}
+	}
 	sb.WriteString(`</g>`)
 }
 

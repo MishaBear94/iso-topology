@@ -860,10 +860,14 @@ func FindPartIDLine(src, id string) int {
 // FindConnectorLine returns the line index of the ci-th `- ` item under
 // the first `connectors:` key, or -1.
 func FindConnectorLine(src string, ci int) int {
+	if ci < 0 {
+		return -1
+	}
 	lines := strings.Split(src, "\n")
 	connLine, connIndent := -1, 0
+	header := regexp.MustCompile(`^\s*connectors:\s*(?:#.*)?$`)
 	for i, l := range lines {
-		if regexp.MustCompile(`^\s*connectors:\s*$`).MatchString(l) {
+		if header.MatchString(l) {
 			connLine, connIndent = i, indentOf(l)
 			break
 		}
@@ -872,15 +876,23 @@ func FindConnectorLine(src string, ci int) int {
 		return -1
 	}
 	itemRe := regexp.MustCompile(`^\s*-\s`)
-	n := 0
+	itemIndent, n := -1, 0
 	for i := connLine + 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "" {
+		trim := strings.TrimSpace(lines[i])
+		if trim == "" || strings.HasPrefix(trim, "#") {
 			continue
 		}
-		if indentOf(lines[i]) <= connIndent {
-			break // left the connectors block
+		ind := indentOf(lines[i])
+		isItem := itemRe.MatchString(lines[i])
+		if ind < connIndent || (ind == connIndent && !isItem) {
+			break
 		}
-		if itemRe.MatchString(lines[i]) && indentOf(lines[i]) > connIndent {
+		if itemIndent < 0 && isItem {
+			itemIndent = ind
+		}
+		// Count only the connector sequence itself. Nested 2-D/3-D waypoint
+		// lists (including indentationless values) are not other connectors.
+		if isItem && ind == itemIndent {
 			if n == ci {
 				return i
 			}
@@ -1438,20 +1450,19 @@ func MovePart(src, id, targetParentID string) (string, bool) {
 	} else {
 		// the target group's OWN nested parts: (first parts: after its id line,
 		// before the next line at ≤ the group's indent)
-		gLine := FindPartIDLine(strings.Join(without, "\n"), targetParentID)
-		if gLine < 0 {
+		destinationSource := strings.Join(without, "\n")
+		gLine := FindPartIDLine(destinationSource, targetParentID)
+		gStart, gEnd, found := findPartItemRange(destinationSource, targetParentID)
+		if gLine < 0 || !found {
 			return src, false
 		}
-		gIndent := indentOf(without[gLine])
+		gIndent := indentOf(without[gStart])
 		reParts := regexp.MustCompile(`^( *)parts:\s*$`)
-		for i := gLine + 1; i < len(without); i++ {
+		for i := gStart + 1; i < gEnd; i++ {
 			if strings.TrimSpace(without[i]) == "" {
 				continue
 			}
-			if indentOf(without[i]) <= gIndent && !strings.HasPrefix(strings.TrimSpace(without[i]), "-") {
-				break // left the group block
-			}
-			if m := reParts.FindStringSubmatch(without[i]); m != nil && len(m[1]) > gIndent {
+			if m := reParts.FindStringSubmatch(without[i]); m != nil && len(m[1]) == gIndent+2 {
 				partsLine, partsIndent = i, len(m[1])
 				break
 			}
@@ -1690,7 +1701,11 @@ func AddConnector(src, from, to, fromAnchor, toAnchor string) (string, bool) {
 		itemLine = partsLine // insert after the new connectors: header
 	}
 
-	nl := itemIndent + fmt.Sprintf(`- { from: %s, to: %s, routing: orthogonal }`, yamlScalar(from), yamlScalar(to))
+	routing := "orthogonal"
+	if strings.HasPrefix(fromAnchor, "port-") || strings.HasPrefix(toAnchor, "port-") {
+		routing = "orthogonal2"
+	}
+	nl := itemIndent + fmt.Sprintf(`- { from: %s, to: %s, routing: %s }`, yamlScalar(from), yamlScalar(to), routing)
 	out := append(append(append([]string{}, lines[:itemLine+1]...), nl), lines[itemLine+1:]...)
 	return strings.Join(out, "\n"), true
 }

@@ -258,6 +258,17 @@ func Validate(doc *Document) []Issue {
 		}
 		for i, c := range n.Connectors {
 			cPath := fmt.Sprintf("%s.connectors[%d]", nodePath, i)
+			if c == nil {
+				issues = append(issues, Issue{Severity: SeverityError, Path: cPath, Message: "connector must be an object"})
+				continue
+			}
+			for _, endpoint := range []struct{ ref, field string }{{c.From, "from"}, {c.To, "to"}} {
+				if isFixedPortRef(endpoint.ref) {
+					if p := findPart(doc, edgeEndpointBase(endpoint.ref)); p != nil && !hasPortBody(p.Shape) {
+						issues = append(issues, Issue{Severity: SeverityError, Path: cPath + "." + endpoint.field, Message: "fixed contour ports require a shape body; use a legacy anchor for text-only parts"})
+					}
+				}
+			}
 			// A self-loop (from==to) projects to a zero-length segment: the
 			// arrow points in an arbitrary direction and no route is visible.
 			if c.From != "" && connectorTarget(c.From) == connectorTarget(c.To) {
@@ -282,6 +293,22 @@ func Validate(doc *Document) []Issue {
 					Message:  fmt.Sprintf("connector references unknown part id %q", c.To),
 					Suggest:  nearestID(c.To, allIDs),
 				})
+			}
+			if len(c.Waypoints3D) > 0 {
+				if c.Routing != "orthogonal" && c.Routing != "orthogonal2" {
+					issues = append(issues, Issue{Severity: SeverityWarning, Path: cPath + ".waypoints3d", Message: "waypoints3d is inactive outside orthogonal/orthogonal2 routing; remove it to discard the saved route"})
+				}
+				if len(c.Waypoints3D) > 512 {
+					issues = append(issues, Issue{Severity: SeverityError, Path: cPath + ".waypoints3d", Message: "waypoints3d exceeds 512 corners"})
+				}
+				for j, p := range c.Waypoints3D {
+					for _, v := range []float64{p.WX, p.WY, p.WZ} {
+						if math.IsNaN(v) || math.IsInf(v, 0) || math.Abs(v) > maxGeomDim {
+							issues = append(issues, Issue{Severity: SeverityError, Path: fmt.Sprintf("%s.waypoints3d[%d]", cPath, j), Message: "waypoint coordinate must be finite and within geometry bounds"})
+							break
+						}
+					}
+				}
 			}
 			// A bad anchor suffix ("db.lft") resolves the part fine then
 			// silently falls back to top-mid — a wrong render with no signal.
@@ -528,6 +555,7 @@ func Validate(doc *Document) []Issue {
 	// v: container fit — a child bursting a fixed-size group (>90% on an axis,
 	// effective dims; see validate_fit.go).
 	issues = append(issues, ContainerFitIssues(doc)...)
+	issues = append(issues, ContentFitIssues(doc)...)
 
 	// v: rounded side band — a solid palette.right silently dropped on a rounded
 	// (or default-rounded group) part (see validate_rounded.go).
@@ -659,7 +687,7 @@ func checkAnchor(ref, path string, allIDs map[string]struct{}, issues *[]Issue) 
 		// shouldn't blank the whole diagram — surface it without killing render.
 		Severity: SeverityWarning,
 		Path:     path,
-		Message:  fmt.Sprintf("unknown anchor %q on %q — renders at top-mid; valid anchors: top/bottom/left/right/front/back (+ -mid)", suffix, ref[:dot]),
+		Message:  fmt.Sprintf("unknown anchor %q on %q — renders at top-mid; valid anchors: top/bottom/left/right/front/back (+ -mid), port-left/port-back/port-right/port-front", suffix, ref[:dot]),
 		Suggest:  nearest(suffix, anchorNames),
 	})
 }

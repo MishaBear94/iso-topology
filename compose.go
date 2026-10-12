@@ -3,6 +3,7 @@ package isotopo
 import (
 	"fmt"
 	"math"
+	"sort"
 )
 
 // Composition repair — the acting half of the M2 composition metrics. Where
@@ -14,8 +15,8 @@ import (
 //   - only parts that carry an EXPLICIT offset are moved — solver-laid parts
 //     are already composed and authors' `place:` relations are never touched;
 //   - every snap is bounded (≤ composeMaxSnap world units) and axis-minimal;
-//   - a snap that would create a new footprint overlap is reverted, so the
-//     defect gates can only stay equal or improve;
+//   - each snap is measured against named visual defects; a new crossing,
+//     tunnel, overlap or occlusion is rejected, even if total counts improve;
 //   - deterministic (declared order, fixed passes) and idempotent — a snapped
 //     part shares a track, so a second run finds nothing to do.
 //
@@ -26,8 +27,8 @@ const (
 	composeMaxSnap = 150.0 // freehand misalignment is typically 60-150u
 	// (measured on scattered-scene fixtures); the collision guard, not a tight
 	// radius, is what keeps snapping safe — 48u caught nothing real
-	composeTol     = 6.0  // "on a track" tolerance, matches compAlignment
-	composePasses  = 4
+	composeTol    = 6.0 // "on a track" tolerance, matches compAlignment
+	composePasses = 4
 )
 
 // composeCand is a movable leaf: a part with its own explicit offset, plus its
@@ -45,17 +46,24 @@ func ComposeScene(doc *Document) []string {
 		return nil
 	}
 	var fixes []string
-	for _, n := range doc.Nodes {
+	ids := make([]string, 0, len(doc.Nodes))
+	for id := range doc.Nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		n := doc.Nodes[id]
 		if n == nil || n.Shape != "composite" {
 			continue
 		}
-		fixes = append(fixes, composeNode(n, doc.Canvas)...)
+		fixes = append(fixes, composeNode(n, doc.Theme, doc.Canvas)...)
 	}
 	return fixes
 }
 
-func composeNode(n *Node, canvas *Canvas) []string {
+func composeNode(n *Node, theme *Theme, canvas *Canvas) []string {
 	var fixes []string
+	var accepted visualDefects
 	for pass := 0; pass < composePasses; pass++ {
 		leaves, cands := composeGeometry(n, canvas)
 		if len(leaves) < 3 {
@@ -89,8 +97,18 @@ func composeNode(n *Node, canvas *Canvas) []string {
 				if composeCollides(moved, leaves) {
 					continue
 				}
+				if accepted == nil {
+					accepted = sceneVisualDefects(n, theme, canvas)
+				}
+				saved := *c.part.Offset
 				c.part.Offset.WX += mv[0]
 				c.part.Offset.WY += mv[1]
+				candidate := sceneVisualDefects(n, theme, canvas)
+				if !candidate.noWorseThan(accepted) {
+					*c.part.Offset = saved
+					continue
+				}
+				accepted = candidate
 				leaves[c.rect.ord].x += mv[0] // keep the live geometry current
 				leaves[c.rect.ord].y += mv[1] // so later snaps see the truth
 				axis := "x"
@@ -135,7 +153,7 @@ func composeGeometry(n *Node, canvas *Canvas) (leaves []compRect, cands []compos
 				r := compRect{ord: len(leaves), id: c.ID, x: x, y: y, w: w, d: d}
 				leaves = append(leaves, r)
 				// Movable = the REAL part carries its own explicit offset.
-				if rp[i].Offset != nil {
+				if rp[i].Offset != nil && rp[i].Place == nil {
 					cands = append(cands, composeCand{part: rp[i], rect: r})
 				}
 			}

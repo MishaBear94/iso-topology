@@ -1,22 +1,20 @@
 <div align="center">
 
-<img src="docs/assets/logo.jpg" alt="iso-topology logo——文本 DSL 变成等距风格的方块架构图" width="440">
+<img src="docs/assets/logo.jpg" alt="iso-topology logo" width="440">
 
-# iso-topology — 用代码画等距架构图
+# iso-topology — 用代码画出设计稿级别的 2.5D 架构图
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Go Reference](https://pkg.go.dev/badge/github.com/MarkovWangRR/iso-topology.svg)](https://pkg.go.dev/github.com/MarkovWangRR/iso-topology)
 
-### Figma 质感的等距(2.5D)架构图——以代码为源,为 agent 而生。
+**对 AI 说出你的需求，或者写下几行简单的代码，即可生成极具质感的 2.5D 等距架构图。**
 
-**用自然语言向你的 agent 提需求,用同样的方式改图,最后把结果提交进仓库。**
+![ClickHouse 实时分析架构](docs/assets/clickhouse-hub.png)
 
-![ClickHouse 实时分析——iso-topology 渲染的暗色毛玻璃等距架构图](docs/assets/clickhouse-hub.png)
+<sub>↑ 这张图就是“问”出来的：“画一个 ClickHouse 实时分析架构，用暗色玻璃风格”。接着再补充几句微调：“连线加粗改成虚线”、“背景加个斜向网格”、“点缀色用青柠色”。不需要开 Figma，也不用算坐标，你只需要一段能存进 Git 的文本。</sub>
 
-<sub>↑ 这张图就是"问"出来的——*「画一个 ClickHouse 实时分析架构,暗色玻璃风格」*——再加几句口头微调(*「连线加粗、虚线、带渐变」「背景加斜向网格」「点缀色用青柠」*)。没有 Figma,没有坐标,只有一段可以 diff 的文本。</sub>
-
-`单个静态二进制` · `零运行时依赖` · `毫秒级渲染` · `200+ 图标(含真品牌 logo)` · `所有样例都有 golden 测试`
+`单文件静态编译` · `零运行时依赖` · `毫秒级极速渲染` · `内置 200+ 精美图标` · `全样例 Golden 测试覆盖`
 
 [English](README.md) · 简体中文
 
@@ -24,16 +22,22 @@
 
 ---
 
-这是唯一一个输出达到设计稿水准的**等距**视觉、DSL 又是一份机器可校验的契约(agent 能对着它自我纠错)、还能**离线在单个静态二进制里确定性运行**的图表即代码工具。替代方案要么是在 Figma 里耗一下午(没法 diff,架构一变图就废),要么是 Mermaid/D2(平面流程图)。iso-topology 让你从文本得到 Figma 的观感——agent 生成、渲染前校验、和代码放在一起提交。
+作为开发者，我们都喜欢用代码画图（Mermaid, D2），因为它们能存进 Git，方便追踪变更。但缺点也很明显：画出来的 2D 框图往往非常单调乏味，很难直接放到官网或产品发布会上展示。如果要追求效果，我们只能去 Figma 里一根线一根线地死磕 2.5D 坐标，一旦架构有变，整张图就得重画。
 
-## 想自己手写?它只是文本。
+**iso-topology** 就是为了解决这个痛点而生的。它是一个单文件 Go 命令行工具（也可作为库引用），能把一份极其简单的文本声明（DSL）编译成媲美专业设计师手绘的 2.5D 等距 SVG 架构图。
 
-preset 把外观定义一次;`layout` / `place` 关系负责定位——从头到尾没有像素坐标。从这段:
+更重要的是，它**为 AI Agent（智能体）量身定制**。Agent 可以在渲染前进行语法校验并自我纠错，生成绝对确定且每次结果完全一致的文件。
+
+## 💡 手写？也完全没问题！
+
+忘记那些复杂的像素和坐标吧！你只需要定义组件的关系（比如“在 API 网关后面加个数据库”），剩下的全都交给内置的布局求解器。
+
+看下面这段简单的 YAML：
 
 ```yaml
 theme:
   presets:
-    heroBlue:                                  # 全图唯一的发光强调色,按名字复用
+    heroBlue:                                  # 设定全图唯一的发光强调色，随时复用
       stroke: { color: "#6FA8E0", width: 1.6 }
       faces: { top: { fill: { kind: linearGradient, stops: [ {offset: 0, color: "#1A3550"}, {offset: 1, color: "#0E1C30"} ] } } }
       effects: { faceSplit: true, backglow: { color: "#6BA8E8", radius: 70 } }
@@ -42,85 +46,74 @@ nodes:
     parts:
       - id: runtime
         shape: group
-        layout: { mode: column }               # ← 自动排布,不写坐标
+        layout: { mode: column }               # ← 让它自动纵向排布，完全不写坐标
         parts:
           - { id: agent,  preset: heroBlue, icon: "iso://si/langchain/8FBEEF", label: "LangGraph Agent" }
           - { id: memory, icon: "iso://glyph/database", label: "Memory · State" }
     connectors:
       - { from: client, to: runtime, routing: orthogonal,
-          stroke: { gradient: { from: "#3B6FD4", to: "#8FBEEF" } } }   # 发光的数据流
+          stroke: { gradient: { from: "#3B6FD4", to: "#8FBEEF" } } }   # 让数据流连线发光
 ```
 
-……渲染出这张图——一个典型的 LangChain agent 应用,用的正是 LangChain 自家的暗色冷蓝风格:
+……稍等片刻，它就会渲染出这张充满冷调科技感的 LangChain Agent 应用架构图：
 
-![LangChain agent 应用架构——深海军蓝舞台,发光的冷蓝 LangGraph 运行时连接客户端、模型、检索、工具,配 LangSmith 可观测性](docs/assets/langchain-app.png)
+![LangChain agent 应用架构](docs/assets/langchain-app.png)
 
-确定性求解器把关系变成几何——这里的每一张图都是零坐标的。
-[源码](samples/topology/langchain-app/input.yaml)。
+[查看完整源码](samples/topology/langchain-app/input.yaml)。
 
-## 60 秒上手
+## 🚀 60 秒极速上手
 
-**自己动手**——单个静态二进制,不需要浏览器和字体:
-
+### 选项 A：自己动手（单文件，无需任何额外环境）
 ```bash
+# 1. 安装 CLI
 go install github.com/MarkovWangRR/iso-topology/cmd/isotopo@latest
-echo 'user -> api -> db' > scene.d2     # 任意 d2 图 → 自动布局
-isotopo render scene.d2 ./out           # → out/topology.svg(+ html + 每节点独立 SVG)
-isotopo serve  scene.d2                 # → localhost:8731——拖拽、改样式、导出
+
+# 2. 随便写一段 d2 格式的关系流
+echo 'user -> api -> db' > scene.d2
+
+# 3. 渲染出图！
+isotopo render scene.d2 ./out           # 输出包含 SVG、HTML 交互预览等
+
+# 4. 边改边看
+isotopo serve  scene.d2                 # 访问 localhost:8731 进入可视化 Studio 界面
 ```
 
-**交给你的 agent**(Claude Code、Cursor 等)——接一次就好(以下命令均经过验证):
+### 选项 B：交给你的 AI Agent（Claude, Cursor 等）
+这是它最强大的玩法（以下命令均已验证可用）：
 
 ```bash
-go install github.com/MarkovWangRR/iso-topology/cmd/isotopo@latest      # 渲染器
+go install github.com/MarkovWangRR/iso-topology/cmd/isotopo@latest      # 渲染核心
 go install github.com/MarkovWangRR/iso-topology/cmd/isotopo-mcp@latest  # MCP 服务
-claude mcp add isotopo -- isotopo-mcp                                   # 注册进 Claude Code
+claude mcp add isotopo -- isotopo-mcp                                   # 一键接入 Claude Code
 ```
 
-之后用自然语言提需求、用自然语言改图——`capabilities → validate → render` 这套循环由 agent 替你跑:
+搞定后，直接在聊天框里对 AI 说：
+> *“帮我画一个 ClickHouse 实时分析架构，用暗黑玻璃风格。”*
+> *“把连线加粗，换成带渐变的虚线。”*
+> *“背景加上斜向网格，顺便把节点的描边提亮一点。”*
 
-> *「画一个 ClickHouse 实时分析架构,暗色玻璃风格」*
-> *「连线加粗,改虚线,带渐变」*
-> *「背景加斜向网格,节点描边提亮一点」*
+你的 Agent 会在后台自动完成所有的排版、校验和渲染。如果你不想配置 MCP，也可以直接运行本仓库里的 `scripts/install-skill.sh` 安装 Claude 技能。完整的系统提示词请参考 [PROMPT_TEMPLATE.md](docs/agent/PROMPT_TEMPLATE.md)。
 
-整个工作流就是:**提需求 → 微调**。比起 MCP 更想用 Claude Code 技能?`git clone` 本仓库后运行
-`scripts/install-skill.sh`。完整的系统提示词在
-[PROMPT_TEMPLATE.md](docs/agent/PROMPT_TEMPLATE.md);其他运行时参考 [`llms.txt`](llms.txt)。
+## 🤖 专为 AI Agent 设计的“自我纠错”工作流
 
-## agent 跑的那套循环
-
-iso-topology 讲契约,不讲手感——agent 先探明 DSL,写出场景,收到机器可校验的反馈,然后在没有人介入的情况下收敛:
+为什么现有的 AI 很难画好复杂的拓扑图？因为它们算不准 2.5D 坐标。
+iso-topology 彻底改变了这一点：它提供了一套基于契约、能自我纠错的完整闭环。
 
 ```bash
-isotopo capabilities          # 机器可读的 DSL 能力清单——每会话读一次
-isotopo validate scene.yaml   # JSONPath 定位的问题 + “你是不是想写……”修复建议(exit 0/2/3)
-isotopo evaluate scene.yaml   # 评分卡:交叉 / 重叠 / 穿越 + 构图得分
-isotopo repair   scene.yaml --compose --write   # 把自动修复写回源文件:遮挡、重叠、
-                                                # 对比度 + 有界的对齐吸附
+isotopo capabilities          # 给 AI 看的说明书：支持什么形状、什么参数（每次会话读一次即可）
+isotopo validate scene.yaml   # 代码校验器：报错会精确到具体行，甚至包含“你是不是想拼写 xxx”的修复建议
+isotopo evaluate scene.yaml   # 评分系统：客观评估是否有组件交叉、重叠或是失衡
+isotopo repair   scene.yaml --compose --write   # 自动修复器：自动推开重叠的组件、吸附对齐，并把改动写回源文件
 isotopo render   scene.yaml out
-isotopo snapshot scene.yaml out                 # + 忠实的 topology.png,供视觉自检
-isotopo preview  scene.yaml out.svg core edge:3   # 只裁剪某个节点 / 组 / 边
+isotopo snapshot scene.yaml out                 # 附带生成光栅化的 png 供视觉核对
+isotopo preview  scene.yaml out.svg core edge:3   # 局部预览功能
 ```
 
-`validate` 是带修复建议的 JSON-schema 检查;`evaluate` 在确定性的平面视图上同时给
-缺陷分和构图分(均衡 / 对齐 / 间距节奏 / 主角权重 / 强调色纪律);`repair` 对两者都能
-下手——修掉缺陷,并把偏离轨道的部件吸附到邻居的对齐轨道上,再把修复结果连同注释一起
-写回源文件。这一切让 agent 在看到一个像素之前就能自我纠错。输出是字节级确定的——同样
-的输入,同样的 SVG——golden 测试和干净的 Git diff 都建立在这上面。
+在生成哪怕一个像素之前，Agent 就能在 `validate` -> `evaluate` -> `repair` 的闭环中完成排版纠错和遮挡修复。这一切都是字节级确定的——只要输入不变，输出的文件永远一模一样。
 
-## MCP 服务
+## ⚙️ MCP 服务接入
 
-`isotopo-mcp` 把整套循环以七个 stdio 工具的形式暴露给任何 MCP 客户端(Claude Code、
-Claude Desktop、Cursor 等)——`iso_capabilities`、`iso_validate`、`iso_evaluate`、
-`iso_repair`、`iso_render`、`iso_snapshot`、`iso_preview`——agent 画图、自我纠错、
-再对自己的产出做视觉检查(validate → repair → render → snapshot),全程不用调 shell:
-
-```bash
-go install github.com/MarkovWangRR/iso-topology/cmd/isotopo-mcp@latest
-claude mcp add isotopo -- isotopo-mcp        # Claude Code
-```
-
-Claude Desktop / Cursor / 任何通用客户端——在它的 MCP 配置里加上:
+`isotopo-mcp` 将整个工作流打包成了 7 个标准 MCP (Model Context Protocol) 工具。Claude Desktop、Cursor 或是任何支持 MCP 的客户端，都能零配置直接接入画图能力：
 
 ```json
 {
@@ -130,115 +123,74 @@ Claude Desktop / Cursor / 任何通用客户端——在它的 MCP 配置里加�
 }
 ```
 
-完整工具参考 + MCP 版的循环:[docs/agent/MCP.md](docs/agent/MCP.md)。
+了解更多 MCP 配置细节：[docs/agent/MCP.md](docs/agent/MCP.md)。
 
-## Studio——点选、拖拽、改样式
+## 🎨 Studio：在浏览器里沉浸式调校
 
 ```bash
-isotopo serve input.yaml        # → http://localhost:8731
+isotopo serve input.yaml        # 打开 http://localhost:8731
 ```
 
-![isotopo Studio——左边是渲染好的等距场景,右边是可编辑的 YAML](docs/assets/studio.png)
+![isotopo Studio](docs/assets/studio.png)
 
-左边是渲染结果,右边是它的 YAML,中间是亚秒级的反馈。**拖拽排版**、把节点拖进/拖出分组、
-**右键改样式**、增删/复制/连接节点、◳ 等距 / ◰ 平面视图切换、撤销/重做,以及导出
-SVG / PNG / YAML。所有编辑都发生在浏览器内的副本上——不点保存,磁盘上的文件绝不会被动。
-导览:[docs/guides/studio.md](docs/guides/studio.md)。
+不想在终端里反复敲命令？直接在 Studio 里边改边看。
+左边是实时渲染的 2.5D 场景，右边是可编辑的 YAML 代码，改动亚秒级生效。你甚至可以**直接用鼠标拖拽组件排版**、支持多选框选、一键切换“等距 / 2D 平面”视图、右键快捷修改样式，最后导出 SVG / PNG。所有的编辑都在浏览器副本内进行，除非你点击保存，否则绝对不会破坏你的源文件。详见 [Studio 导览](docs/guides/studio.md)。
 
-## 你能画什么
+## ✨ 核心能力一览
 
-- **18 种等距图元**——方块、圆柱、棱柱(三/六/八棱)、机架、阵列(1D/2D/3D)、云、
-  人形、边界(VPC/区域)、楔形、自定义多边形——按*角色*选形状,而不是清一色的矩形。
-- **零坐标布局**——`place: {rightOf|behind|above…, gap}` 关系 +
-  `layout: {mode: row|column|grid|ring|auto}` 容器(auto = 按连线求解 DAG)。
-  求解器负责计算位置、校验引用、并对重叠发出警告。
-- **设计稿级样式**——逐面的纯色/渐变填充、半透明**玻璃**、**颗粒**质感、`faceSplit`
-  受光、点阵/斜纹纹理(按等距投影)、投影、辉光、圆角、线框。
-- **读起来像系统的连线**——`orthogonal`(沿等距网格走线)/ `straight` / `bezier`,
-  支持虚线、渐变、途经点和标签。
-- **一份源码,两种投影**——默认是设计稿级的**等距**视图;想要极致易读的时候切换成
-  平面的 **2D 俯视**“文档”视图。渲染时 `--projection top`,或在场景里写
-  `canvas: { projection: top }`——同一份 DSL,同一个布局求解器,不用重写。
-  参见 [`samples/topology/plan-view-2d`](samples/topology/plan-view-2d/input.yaml)。
-- **命名主题 + 语义角色**——只写纯拓扑(`role: hero | tray | chip`),再挑一个外观:
-  `--theme clickhouse-dark | navy-glass | handdrawn-paper | clean-light`
-  (或在 DSL 里写 `theme: { use: <name> }`)。主题提供整套设计系统——角色样式、
-  尺寸节奏、文字、画布,甚至会为深色填充自动适配图标墨色——同一个场景可以整体换肤,
-  一个普通的 `.d2` 图也能靠一个 flag 得到完整的外观。
-- **一个 flag 换来可读性**——`isotopo render --readable` 给任意场景叠加一层以易读为先的
-  “文档”配置:直立的屏幕空间标签、感知画布的对比度底衬、内边距下限。可选且无损——
-  它只填补你留空的部分,精心调过的场景保持原样。
-- **200+ 可改色图标**——150+ 真品牌 logo(Simple Icons,CC0)加 35 个概念图形;
-  任何图标都能用 `/RRGGBB` 或 `/light` 改色。
-- **可复用的外观**——`theme.presets`,外加 28 份即拿即用的
-  [风格参考](samples/style_refer):按气质挑一种视觉语言,复制它的
-  `theme.presets` + `canvas`,再把你的拓扑叠上去。
+- **18 种 2.5D 几何体**：方块、圆柱、棱柱（三/六/八面）、机架、阵列（1D/2D/3D）、云、人形、边界等，充分表达复杂的业务语义。
+- **真正的零坐标自动布局**：用相对关系（`rightOf`, `behind`, `above`）或容器模式（`row`, `column`, `grid`, `ring`），甚至直接让图引擎自动排布（`auto`），彻底告别算坐标的折磨。
+- **顶级的视觉样式**：支持毛玻璃半透明、逐面渐变、底纹（点阵/斜纹）、投影、辉光、圆角、胶片颗粒噪声（Grain），随心所欲定制风格。
+- **专业的正交连线（Orthogonal Routing）**：连线会自动沿着等距网格绕开障碍物（`orthogonal2`），支持自定义虚线、渐变色、途经点及标签。
+- **一键切换 2D 俯视模式**：在渲染时加上 `--projection top`，设计稿级别的 2.5D 图瞬间降维成最清晰的 2D 架构说明图。一套代码，两种用途。（见 [2D 模式样例](samples/topology/plan-view-2d/input.yaml)）。
+- **200+ 免费正版图标**：内置 150+ 个来自 [Simple Icons](https://simpleicons.org) 的大厂 logo，加 35 个手绘概念图。支持随意变色（例如 `/RRGGBB`）。
 
-机器可读的完整清单:`isotopo capabilities`(或
-[CAPABILITIES.md](docs/agent/CAPABILITIES.md))。
+## 🖼️ 画廊：看看大家都在画什么
 
-## 画廊
+**ClickHouse 实时分析生态** —— 暗黑毛玻璃轮辐结构，炫酷的霓虹点缀。[源码](samples/topology/clickhouse-hub/input.yaml)
+![ClickHouse 生态](docs/assets/clickhouse-hub.png)
 
-**ClickHouse 生态**——暗色毛玻璃的轮辐结构,唯一的霓虹强调色。[源码](samples/topology/clickhouse-hub/input.yaml)
+**DuckDB 手绘风格数据架构** —— 温暖的纸张质感、等距网格和胶片颗粒。[源码](samples/topology/duckdb-handdrawn/input.yaml)
+![DuckDB 手绘风](docs/assets/duckdb-handdrawn.png)
 
-![ClickHouse 生态等距图](docs/assets/clickhouse-hub.png)
+**Databricks 湖仓 + AI Agent** —— 品牌原生的高级感，暖白色画布上唯一的 Lava 橙红强调。[源码](samples/topology/lakehouse-agent/input.yaml)
+![Databricks 湖仓](docs/assets/lakehouse-agent.png)
 
-**DuckDB 数据架构**——手绘风:暖色纸面、等距网格、胶片颗粒。[源码](samples/topology/duckdb-handdrawn/input.yaml)
+**训练算力消耗图** —— 用等距柱状图和虚线框，直观展示算力账单的“幽灵”体积。[源码](samples/topology/training-compute/input.yaml)
+![训练算力柱状图](docs/assets/training-compute.png)
 
-![DuckDB 手绘风等距图](docs/assets/duckdb-handdrawn.png)
+## 📦 作为 Go 语言库嵌入
 
-**Databricks 湖仓 + LLM 智能体**——忠于品牌,暖色画布上唯一的 Lava 强调。[源码](samples/topology/lakehouse-agent/input.yaml)
-
-![Databricks 湖仓与 LLM 智能体等距图](docs/assets/lakehouse-agent.png)
-
-**训练算力**——亮色画布,虚线的预算“幽灵”体积。[源码](samples/topology/training-compute/input.yaml)
-
-![等距的训练算力柱状图](docs/assets/training-compute.png)
-
-## 为什么是等距,为什么是这个工具
-
-平面 2D 读起来是一排方框;等距图读起来是一个**系统**——纵深方向一眼分出接入层 / 中间层 /
-数据层,叠起来的节点天然表达副本和高可用。而在 Figma 里手绘等距图,规模到十来个元素
-就到头了,还没有一个人能 review 它的 diff。
-
-| | Mermaid / D2 | Figma / draw.io | **iso-topology** |
-|---|---|---|---|
-| 视觉档次 | 平面流程图 | 设计稿水准 | **设计稿水准的等距图** |
-| 文本源码、可 git diff | ✓ | ✗ | ✓ |
-| agent 可探明并校验 DSL | ✗ | ✗ | **✓(`capabilities` + `validate`)** |
-| 不需要手调坐标的布局 | ✓ | ✗ | ✓(`place` / `layout` 求解器) |
-| 离线单文件运行 | 部分 | ✗ | ✓ |
-
-## 当 Go 库用
+你也可以把它当成一个普通的 Go package 引入你的系统里：
 
 ```go
 import isotopo "github.com/MarkovWangRR/iso-topology"
 
-svg, issues, _ := isotopo.RenderSource("yaml", yamlBytes)            // DSL → 一张 SVG
+// 把文本 DSL 直接渲染成 SVG
+svg, issues, _ := isotopo.RenderSource("yaml", yamlBytes)
 
+// 甚至支持对画板进行无状态的增删改查
 op := isotopo.EditOp{Kind: "move", Target: "node", ID: "api", DWX: 50}
-newSrc, svg, issues, _ := isotopo.ApplyOp("yaml", yamlBytes, op)     // 无状态画布编辑,注释保留
+newSrc, svg, issues, _ := isotopo.ApplyOp("yaml", yamlBytes, op) // 编辑源码，原样保留注释
 ```
 
-这套无状态编辑契约支撑着 Studio 和浏览器端 WASM 编辑器。完整接口:
-[API 参考](docs/reference/api.md)([godoc](https://pkg.go.dev/github.com/MarkovWangRR/iso-topology))。
+这套极其灵活的无状态编辑 API，正是支撑前面提到的强大交互式 Studio 的底层核心。[点击查看完整 API 文档](docs/reference/api.md) ([GoDoc](https://pkg.go.dev/github.com/MarkovWangRR/iso-topology))。
 
-## 文档
+## 📚 详细文档
 
-总索引在 [docs/README.md](docs/README.md)。
+你想了解的一切都在 [docs/README.md](docs/README.md) 里：
 
-- **入门:**[教程](docs/getting-started/01-install.md) · [常用写法](docs/agent/RECIPES.md) · [画面设计](docs/guides/scene-design.md)
-- **参考:**[API](docs/reference/api.md) · [CLI](docs/reference/cli.md) · [YAML DSL](docs/reference/dsl-yaml.md) · [d2 DSL](docs/reference/dsl-d2.md) · [样式/主题](docs/reference/dsl-theme.md)
-- **Agent:**[CAPABILITIES](docs/agent/CAPABILITIES.md) · [PROMPT_TEMPLATE](docs/agent/PROMPT_TEMPLATE.md) · [SAMPLES](docs/agent/SAMPLES.md) · [schema](docs/agent/schema/dsl.schema.json) · [MCP](docs/agent/MCP.md) · [skills](skills/README.md)
+- **入门必读：** [快速教程](docs/getting-started/01-install.md) · [常用写法速查](docs/agent/RECIPES.md) · [视觉设计指南](docs/guides/scene-design.md)
+- **硬核参考：** [API 文档](docs/reference/api.md) · [CLI 命令](docs/reference/cli.md) · [YAML 语法](docs/reference/dsl-yaml.md) · [d2 语法](docs/reference/dsl-d2.md)
+- **Agent 开发：** [能力清单](docs/agent/CAPABILITIES.md) · [提示词模板](docs/agent/PROMPT_TEMPLATE.md) · [MCP 指南](docs/agent/MCP.md)
 
-## 项目状态与参与
+## ❤️ 项目状态与开源参与
 
-个人项目,迭代很快——如有依赖请锁定 tag(`d2` 依赖已固定在 `v0.7.1`)。欢迎 issue 和
-PR;提交前请跑 `go test ./...`——`samples/*/*/expected.svg` 是 golden 文件,任何输出
-漂移都会被拦住。画出了得意之作?开个 issue 贴上你的场景和 SVG,优秀作品会被收录到这里。
-点个 ⭐ 能让更多人找到它。
+本项目是一个快速迭代中的个人开源项目。如果你要在生产代码中引入它，强烈建议锁定某个 tag 版本。欢迎各位提交 Issue 和 PR！
 
-## 许可证
+（请注意：在提交 PR 前务必跑一遍 `go test ./...`，任何微小的视觉漂移都会被极其严格的 Golden 测试拦下。）
 
-Apache License 2.0——见 [LICENSE](LICENSE)。渲染产物归你所有,可以商用;内置的品牌
-logo 来自 [Simple Icons](https://simpleicons.org),CC0 协议。
+**如果你用它画出了很棒的作品？** 欢迎开个 Issue 晒出你的截图和源码，我会把它加进画廊。如果它帮你省下了被 Figma 折磨的时间，**求点个 ⭐ 星星支持一下！**
+
+---
+*Apache License 2.0 开源授权。渲染产物版权完全归你，可放心商用。*

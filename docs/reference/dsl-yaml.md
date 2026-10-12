@@ -278,6 +278,74 @@ nodes:
         stroke:  {color: "#1F2937", width: 1.2, dash: "4 3"}
 ```
 
+For a measured multiline label, set `labelFontFamily: Source Sans Pro`.
+`labelFontWeight` supports `400`, `600` (default), `700`, `normal`, and `bold`;
+`labelFontSize` defaults to 13 in iso and 10 in top. The embedded resource is
+shared by measurement and SVG/PNG output. Explicit newlines, blank lines and
+spaces are preserved when the entire block is supported. Other families or
+unsupported scripts retain estimated browser-font geometry. Unset font fields
+preserve legacy output; an explicit size is now also honored in top projection.
+
+Measured pills are placed after all routes and arrows are known. The whole
+previous AABB arrangement is retained first. Already-clear labels keep their
+exact anchors; blocked labels search continuous intervals on their own path
+while protecting every other label's current box. Body and arrow bounding
+boxes remain conservative. Other routes use swept stroke envelopes that
+include round caps/joins and a bounded quadratic approximation error,
+releasing the empty corners of diagonal route boxes. An already-safe position
+keeps its existing exact curve-bounds certificate, including when the curve
+subdivision cap makes the new envelope more conservative. Clearance is 6 SVG
+units. Substrates are excluded as body obstacles; their content,
+effects and arbitrary-font ink are outside this clearance scope. Quadratic
+labels stay on the submitted curve. Initial placement is deterministic and
+greedy. If individual refinement finds no feasible interval, the
+full text keeps its baseline anchor (the path midpoint when the baseline
+search itself failed). Final status is checked against the whole arrangement;
+`render --report` records a
+`connector-label-placement` warning for every affected measured label. Increase spacing or adjust the route;
+the renderer never silently shrinks or truncates the text to make it fit.
+
+For eligible iso scenes, an additional pass can release empty corners of body
+bounding boxes. It combines filled shape faces, actual stroke widths and
+curve error with measured node text and icon bounds; concave notches remain
+usable where no real outline crosses them. Only still-blocked labels move,
+and every peer pill, foreign route and arrow remains protected. Successful
+labels declare a `body-region,content-quad,...` scope in the report. This also
+protects measured substrate content, while allowing labels on substrate fills.
+The extra pass requires bounded content throughout the scene; unknown fonts
+or shapes, screen labels, annotations, legacy connector pills and unsupported
+effects retain the previous layout. Person/circle captions and cloud labels
+without icons now use embedded Source Sans Pro metrics for complete supported
+blocks at weights 400, 600 and 700. These captions preserve authored
+newlines and font size, expanding the export canvas when needed; this does not
+certify that a long caption fits inside its node or avoids other objects.
+Cloud captions without icons keep their original centroid; clouds with icons
+retain the existing bounded face layout. A partially unsupported block still
+falls back. See the [API clearance contract](api.md#measured-connector-labels)
+for the exact scope and fallbacks. No route, font size or authored text is
+changed by this refinement. The optional pass has bounded search work; if its
+budget runs out, unresolved labels retain their prior position and status.
+
+A subsequent bounded joint pass can release labels that block each other's
+available slots. Already-clear labels stay fixed. Still-blocked labels may share
+a corridor by choosing different safe positions on their existing routes;
+every changed label must clear all final peer positions, including labels that
+remain unresolved. It preserves node/route geometry and full text, and retains
+only fully checked assignments if the work budget runs out. Its finite choices
+do not guarantee a globally optimal packing. Unknown iso content/effects, legacy
+pills, and plan node titles using ambient fonts retain the previous arrangement.
+
+`render --report` identifies the body, route, arrow or peer label involved in
+each measured blockage. Its structured `typography.conflicts` list retains
+connection indexes (including parallel edges) and a conservative
+`clearance_shortfall` in SVG units. This measures intrusion into the declared
+6-unit safety gap; it is not pixel overlap area or a complete relocation
+solution. Routing repair cannot trade an existing blockage for a new
+counterpart or deepen its measured shortfall merely because total readability
+cost decreases. Detailed lists are collected for reports and repair candidates;
+ordinary `RenderScene` previews keep the same geometry without that payload.
+
+
 `orthogonal` bends along the iso ground axes (every segment projects
 to exactly ±30°, in register with `canvas.grid: iso`) — prefer it
 for architecture flows. `bezier` draws a single soft quadratic arc —
@@ -301,9 +369,53 @@ iso-axis-aligned. `bend: {wx, wy}` is the older single-corner form
 (a world offset applied to the auto route's interior); `waypoints`
 supersedes it.
 
-Anchor selectors: `"api.right-mid"`, `"api.top-back"`, etc. — pick a
-specific face-center on the source/target part. Default is the part
-centroid.
+For a route that preserves **height**, use `waypoints3d` (Studio segment
+drags now write this field):
+
+```yaml
+      - from: api.port-right
+        to: db.port-left
+        routing: orthogonal2
+        waypoints3d:
+          - {wx: 120, wy: 40, wz: 0}
+          - {wx: 120, wy: 40, wz: 80}
+          - {wx: 200, wy: 40, wz: 80}
+```
+
+These are interior **absolute world XYZ** positions, in source-to-target
+order; an omitted coordinate means zero, including `wz`. Endpoints are
+resolved from `from` and `to` at their current heights. When consecutive
+points differ on multiple axes, the route inserts bridges in X, then Y,
+then Z order. Authored corners are retained. Plan view uses the XY
+projection of the same intent and collapses vertical legs.
+
+A nonempty `waypoints3d` overrides `waypoints`, `bend` and automatic
+routing. The old fields retain their original semantics and can remain in
+the source; removing `waypoints3d` restores that earlier intent. This field
+is active with `orthogonal` or `orthogonal2`; switching to straight or
+Bezier keeps the saved corners inactive and reports a warning, so switching
+back restores them. It allows at most 512 interior corners and finite
+coordinates within the geometry bounds. Explicit routes can cross
+bodies; choosing corners is not an obstacle-clearance guarantee.
+
+Legacy anchor selectors include `api.right-mid`, `api.top`, and
+`api.front`. Orthogonal routes choose a facing side for bare IDs;
+straight and bezier routes start from the default top centre.
+
+For a fixed visible attachment, use `api.port-left`, `api.port-back`,
+`api.port-right`, or `api.port-front`. Studio creates these references
+with `orthogonal2` routing. The renderer and editor resolve the same
+body boundary, and fan-out never moves the selected endpoint. In plan
+view, the same names attach to footprint-side midpoints. A stack instance
+remains addressable, for example `workers~2.port-right`; plan view shows
+its connection on the collapsed stack footprint.
+
+Fixed ports describe projected contour attachments, not physical 3D face
+centres. Array/rack shapes currently use a semantic envelope; text-only
+parts use legacy anchors. A forced straight line, curve, bend or waypoint
+can still cross a body: preserving an endpoint does not prove route
+visibility or obstacle clearance. Multiple edges on one fixed port share
+a junction; use bare IDs when automatic endpoint distribution is desired.
 
 ### `annotations` — screen-space callouts
 

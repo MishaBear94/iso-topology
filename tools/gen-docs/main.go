@@ -677,12 +677,17 @@ func connectorSchema() map[string]any {
 		"type":     "object",
 		"required": []string{"from", "to"},
 		"properties": map[string]any{
-			"from":    map[string]any{"type": "string", "description": "Source part id (or id.anchor for a specific face center)."},
-			"to":      map[string]any{"type": "string", "description": "Destination part id (same syntax)."},
-			"label":   map[string]any{"type": "string"},
-			"labelBg": map[string]any{"type": "string"},
-			"arrow":   map[string]any{"type": "string", "enum": []string{"none", "triangle"}},
-			"routing": map[string]any{"type": "string", "enum": []string{"straight", "orthogonal", "bezier"}, "description": "orthogonal bends along iso ground axes (grid-aligned); bezier = soft quadratic arc."},
+			"from":            map[string]any{"type": "string", "description": "Source part id (or id.anchor for a specific face center)."},
+			"to":              map[string]any{"type": "string", "description": "Destination part id (same syntax)."},
+			"label":           map[string]any{"type": "string"},
+			"labelBg":         map[string]any{"type": "string"},
+			"labelColor":      map[string]any{"type": "string"},
+			"labelFontSize":   map[string]any{"type": "number", "description": "Default 13 in iso, 10 in top."},
+			"labelFontFamily": map[string]any{"type": "string", "description": "Source Sans Pro opts into embedded font resources, measured multiline labels and continuous inline placement. Unknown fonts/scripts remain estimated."},
+			"labelFontWeight": map[string]any{"type": "string", "description": "Default 600. Embedded font weights: 400, 600, 700; normal and bold aliases."},
+			"arrow":           map[string]any{"type": "string", "enum": []string{"none", "triangle"}},
+			"routing":         map[string]any{"type": "string", "enum": []string{"straight", "orthogonal", "orthogonal2", "bezier"}, "description": "orthogonal bends along iso ground axes (grid-aligned); bezier = soft quadratic arc."},
+			"waypoints3d":     map[string]any{"type": "array", "maxItems": 512, "items": worldPointSchema(), "description": "Explicit interior XYZ world corners for orthogonal/orthogonal2. Omitted coordinates are absolute zero. A nonempty list overrides waypoints, bend and automatic routing; endpoints remain resolved from from/to."},
 			"stroke": map[string]any{
 				"type": "object",
 				"properties": map[string]any{

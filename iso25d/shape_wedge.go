@@ -113,6 +113,10 @@ func init() {
 // The slope face uses the top palette colour; the right triangle uses the
 // right palette colour.
 func RenderIsoWedge(o IsoBoxOpts) string {
+	return renderIsoWedge(o, nil)
+}
+
+func renderIsoWedge(o IsoBoxOpts, fonts fontResources) string {
 	g := computeBoxGeom(o.Width, o.Depth, o.Height, o.Margin)
 	params := map[string]any{}
 	var prov WedgeShapeProvider
@@ -230,6 +234,7 @@ func RenderIsoWedge(o IsoBoxOpts) string {
 		ox, oy, cr.W, cr.H,
 		o.Label, o.LabelLines, o.Icon, o.IconScale, o.IconAnchor, o.IconOffX, o.IconOffY,
 		o.FontFamily, o.FontSize, o.FontWeight, o.FontColor,
+		fonts,
 	)
 
 	if o.OutlineColor != "" && o.OutlineWidth > 0 {

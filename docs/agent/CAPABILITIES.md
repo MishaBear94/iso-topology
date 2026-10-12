@@ -125,13 +125,16 @@ Directed line between two parts, optionally labeled and orthogonal-routed. Copla
 | `arrow` | none = no head; triangle = filled arrowhead at the dst |
 | `bend` | v4.4 — {wx, wy} world offset on the route's interior so a Studio edge-drag shifts the line while both endpoints stay docked |
 | `elbow` | v3.1 — orthogonal elbow bias: xFirst | yFirst (default: the axis the source face exits along). orthogonal2 auto-routes and ignores elbow. |
-| `from` | source part id; "id.anchor" picks a specific face-centre (e.g. central.right-mid). Bare ids auto-pick the face FACING the other endpoint. STRONGLY PREFER a target at the SAME height (wz/tier) as this source — same-height pairs route as clean flat 2D lines; pick the coplanar candidate when several would work. |
+| `from` | source part id; "id.anchor" picks a specific face-centre (e.g. central.right-mid). Use id.port-left/port-back/port-right/port-front for a fixed visible contour port; Studio uses these and retains stack instance IDs (id~N). Legacy anchors keep their existing semantics. Bare ids auto-pick the face FACING the other endpoint. STRONGLY PREFER a target at the SAME height (wz/tier) as this source — same-height pairs route as clean flat 2D lines; pick the coplanar candidate when several would work. |
 | `labelBg` | pill background (default #FFFFFFEE) |
 | `labelColor` | v3.1 — pill ink (default #1F2433); dim it for dark scenes |
-| `labelFontSize` | v3.1 — pill font size (default 11) |
+| `labelFontFamily` | Optional font family. Source Sans Pro binds supported complete text blocks to an embedded resource with measured multiline geometry and continuous inline placement. Unset keeps legacy output; unsupported text/fonts remain estimated. |
+| `labelFontSize` | Pill font size (default 13 in iso, 10 in top). Explicit sizes are honored in both projections. |
+| `labelFontWeight` | Optional label weight (default 600). Embedded Source Sans Pro supports 400/600/700, normal/bold aliases. Measured placements declare their body/route/arrow/pill envelope scope; blocked labels remain visible and produce render-report warnings. |
 | `routing` | ALWAYS use orthogonal — every segment rides the iso ground axes, flush with the 2.5D grid (collinear endpoints collapse to one on-axis segment). orthogonal2 (opt-in v2) keeps the same iso-axis discipline but searches a multi-segment route that detours around node footprints and avoids crossing already-placed edges — reach for it when a dense scene makes plain orthogonal tunnel a node or cross another line. straight/bezier cut across the grid and are reserved for non-iso freeform sketches. Endpoints should be coplanar (same wz); see Purpose for cross-tier risers. |
 | `to` | destination part id (same anchor syntax). Choose an endpoint coplanar with `from` (same wz/tier) whenever possible; only span heights for an intentional cross-tier link, which renders a vertical drop segment. |
 | `waypoints` | v4.6 — explicit interior corner list [{wx, wy}, …] (world coords, source→target) the route threads through, so a Studio edge-drag can move ONE segment independently. Supersedes bend + the auto route; endpoints stay docked. Auto-kept iso-axis-aligned. |
+| `waypoints3d` | Explicit interior XYZ world corners [{wx, wy, wz}, ...] for orthogonal/orthogonal2; omitted coordinates are absolute zero. Nonempty values override waypoints, bend and automatic routing. Studio segment dragging writes this field to preserve risers and endpoint heights. Axis bridges use X, Y, then Z; endpoints remain resolved from from/to. Other routing modes leave it inactive and report a warning. Remove the field to resume previous routing intent. At most 512 corners; this does not guarantee obstacle clearance. |
 
 ### `layout`
 
@@ -214,7 +217,7 @@ Closed vocabularies the engine accepts verbatim — a value outside the set sile
 | Key | Values |
 |---|---|
 | `annotation_side` | `top`, `right`, `bottom`, `left` |
-| `connector_anchor` | `top`, `top-mid`, `center`, `bottom`, `bottom-mid`, `left`, `left-mid`, `right`, `right-mid`, `back`, `back-mid`, `front`, `front-mid` |
+| `connector_anchor` | `top`, `top-mid`, `center`, `bottom`, `bottom-mid`, `left`, `left-mid`, `right`, `right-mid`, `back`, `back-mid`, `front`, `front-mid`, `port-left`, `port-back`, `port-right`, `port-front` |
 | `connector_arrow` | `none`, `triangle` |
 | `connector_routing` | `straight`, `orthogonal`, `orthogonal2`, `bezier` |
 | `layout_engine` | `elk`, `dagre` |

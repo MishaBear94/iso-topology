@@ -42,8 +42,9 @@ type PlanReport struct {
 	MaxEdgeLen        float64 `json:"max_edge_len"`
 	FlowAxis          string  `json:"flow_axis"` // vertical | horizontal | none
 
-	CrossingsAt  []PlanPoint     `json:"crossings_at,omitempty"`
-	ProblemEdges []PlanEdgeIssue `json:"problem_edges,omitempty"`
+	CrossingsAt   []PlanPoint        `json:"crossings_at,omitempty"`
+	ProblemEdges  []PlanEdgeIssue    `json:"problem_edges,omitempty"`
+	RouteCrowding *PlanRouteCrowding `json:"route_crowding,omitempty"`
 }
 
 // EvaluatePlanText parses a document and scores its plan-view layout.
@@ -61,20 +62,17 @@ func EvaluatePlanText(format string, src []byte) (*PlanReport, error) {
 
 // EvaluatePlan computes the scorecard from a scene's flat geometry.
 func EvaluatePlan(n *Node, theme *Theme, canvas *Canvas) *PlanReport {
-	rects, _, edges := buildPlanModel(n, theme, canvas)
-	var leaves []planRect
-	for _, r := range rects {
-		if !r.container {
-			leaves = append(leaves, r)
-		}
-	}
-	return evalGeom(leaves, edges)
+	return resolvePlanScene(n, theme, canvas, true, false).evaluate(nil)
 }
 
 // evalGeom computes the scorecard from already-resolved leaf footprints and
 // routed edges — shared by EvaluatePlan and the A/B harness so both score
 // identically.
 func evalGeom(leaves []planRect, edges []planEdge) *PlanReport {
+	return evalGeomWithDefects(leaves, edges, nil)
+}
+
+func evalGeomWithDefects(leaves []planRect, edges []planEdge, defects visualDefects) *PlanReport {
 	rep := &PlanReport{Nodes: len(leaves), Edges: len(edges)}
 
 	// Per-edge: length, bends, flow contribution, tunnelling through nodes.
@@ -100,6 +98,7 @@ func evalGeom(leaves []planRect, edges []planEdge) *PlanReport {
 			}
 			if routeHitsRect(e.pts, r) {
 				through = append(through, r.id)
+				defects.add(visualDefect{kind: "tunnel", edge: e.ci, a: r.id})
 			}
 		}
 		if len(through) > 0 {
@@ -145,6 +144,7 @@ func evalGeom(leaves []planRect, edges []planEdge) *PlanReport {
 				for b := 1; b < len(edges[j].pts); b++ {
 					if p, ok := segInt(edges[i].pts[a-1], edges[i].pts[a], edges[j].pts[b-1], edges[j].pts[b]); ok {
 						rep.Crossings++
+						defects.add(visualDefect{kind: "crossing", edge: edges[i].ci, peer: edges[j].ci})
 						rep.CrossingsAt = append(rep.CrossingsAt, p)
 					}
 				}
@@ -157,6 +157,7 @@ func evalGeom(leaves []planRect, edges []planEdge) *PlanReport {
 		for j := i + 1; j < len(leaves); j++ {
 			if rectsOverlap(leaves[i], leaves[j]) {
 				rep.NodeOverlaps++
+				defects.add(nodePairDefect("leaf-overlap", leaves[i].id, leaves[j].id))
 			}
 		}
 	}
@@ -166,8 +167,9 @@ func evalGeom(leaves []planRect, edges []planEdge) *PlanReport {
 // RenderPlanAnnotated renders the plan view with every crossing and tunnelling
 // edge highlighted in red, and returns the scorecard alongside it.
 func RenderPlanAnnotated(n *Node, theme *Theme, canvas *Canvas) (string, *PlanReport) {
-	rep := EvaluatePlan(n, theme, canvas)
-	return renderPlan(n, theme, canvas, rep), rep
+	p := resolvePlanScene(n, theme, canvas, true, false)
+	rep := p.evaluate(nil)
+	return renderResolvedPlan(p, canvas, rep, nil, nil), rep
 }
 
 // planZTol absorbs small z-gaps (a chip resting on a plate) so "same floor"

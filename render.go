@@ -48,18 +48,22 @@ func RenderWithCanvas(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation)
 }
 
 // RenderWithRouteInfo is RenderWithCanvas plus WS-E's in-memory record of
-// every rendered connector's real geometry (world + screen, pre-clip; see
+// every rendered connector's pre-clip tracks and final submitted path/opaque body coverage (see
 // ConnectorRoute in routecollect.go). The SVG string is byte-for-byte
 // identical to RenderWithCanvas — collection is pure observation — so this
 // is the structured replacement for regexing data-route out of the output.
 // Non-composite nodes and the top-down plan projection carry no iso
 // connector layer and return nil routes.
 func RenderWithRouteInfo(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation) (string, []ConnectorRoute) {
+	return renderWithRouteInfo(n, theme, canvas, anns, false)
+}
+
+func renderWithRouteInfo(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation, preClipOnly bool) (string, []ConnectorRoute) {
 	if n == nil {
 		return "", nil
 	}
 	if n.Shape == "composite" && (canvas == nil || canvas.Projection != "top") {
-		rc := &routeCollector{}
+		rc := &routeCollector{preClipOnly: preClipOnly}
 		svg := renderComposite(n, theme, canvas, anns, rc)
 		return svg, rc.routes
 	}
@@ -73,100 +77,25 @@ func RenderWithRouteInfo(n *Node, theme *Theme, canvas *Canvas, anns []*Annotati
 // non-nil, collects each connector's real route in memory (WS-E) and is
 // forbidden from altering the output bytes.
 func renderComposite(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation, rc *routeCollector) string {
+	return renderCompositeWithVisibility(n, theme, canvas, anns, rc, false)
+}
+
+// renderCompositeWithVisibility keeps the depth compositor under an explicit,
+// per-render internal experiment. Public rendering preserves the accepted
+// compositor until port semantics, mixed-shape locality and body order pass
+// independent verification. Never use a process-global flag for this choice.
+func renderCompositeWithVisibility(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation, rc *routeCollector, spatialVisibility bool) string {
 	// v2.2 — solve layout/place declarations into concrete Offsets
 	// before lowering. Issues are render-time-silent; Validate surfaces
 	// the same list to agents via layoutIssues.
-	applyLayout(n, canvas)
-	flat := lowerCompositeParts(n.Parts, 0, 0, 0)
+	n = resolvedLayout(n, canvas)
+	flat := lowerCompositeParts(n.Parts, 0, 0, 0, n.GridStep)
 	if len(flat) == 0 {
 		return ""
 	}
-	flat = resolveGroupLabelOcclusion(flat)
-
-	// v3.0 — stable-partition substrates to the front of the painter
-	// order. A group slab is a thin plate at the ground (or its parent's
-	// top): painting every slab before every body is the correct 3D
-	// back-to-front order, and it makes the substrate block contiguous so
-	// the connector layer can splice in directly above it.
-	nSubstrates := 0
-	{
-		// v3.1 — "platforms" join the hoist: a THIN part (h ≤ 24) whose
-		// top face has other parts standing on it behaves like a group
-		// slab (a board carrying chips), so routes between the parts it
-		// carries must paint above it too. Group slabs keep going first.
-		dims := func(p *CompositePart) (x, y, z, w, d, h float64) {
-			w, d, h = 140, 140, 80
-			if p.Geom != nil {
-				if p.Geom.W > 0 {
-					w = p.Geom.W
-				}
-				if p.Geom.D > 0 {
-					d = p.Geom.D
-				}
-				if p.Geom.H > 0 {
-					h = p.Geom.H
-				}
-			}
-			if p.Offset != nil {
-				x, y, z = p.Offset.WX, p.Offset.WY, p.Offset.WZ
-			}
-			return
-		}
-		isPlatform := make([]bool, len(flat))
-		for i, p := range flat {
-			if p.isSubstrate {
-				continue
-			}
-			px, py, pz, pw, pd, ph := dims(p)
-			if ph > 24 {
-				continue
-			}
-			for j, q := range flat {
-				if i == j || q.isSubstrate {
-					continue
-				}
-				qx, qy, qz, qw, qd, _ := dims(q)
-				if math.Abs(qz-(pz+ph)) > 0.5 {
-					continue
-				}
-				cx, cy := qx+qw/2, qy+qd/2
-				if cx > px && cx < px+pw && cy > py && cy < py+pd {
-					isPlatform[i] = true
-					break
-				}
-			}
-		}
-		ordered := make([]*CompositePart, 0, len(flat))
-		for _, p := range flat {
-			if p.isSubstrate {
-				ordered = append(ordered, p)
-			}
-		}
-		for i, p := range flat {
-			if !p.isSubstrate && isPlatform[i] {
-				p.isSubstrate = true // downstream layers treat it like a slab
-				ordered = append(ordered, p)
-			}
-		}
-		nSubstrates = len(ordered)
-		for _, p := range flat {
-			if !p.isSubstrate {
-				ordered = append(ordered, p)
-			}
-		}
-		flat = ordered
-	}
-
-	// v5.2 — canvas.depthSort: true painter's-algorithm ordering. When
-	// enabled, parts are stably re-sorted back-to-front by projected
-	// world depth, merged ACROSS groups, so paint order no longer follows
-	// author order (the legacy behaviour, kept as the default). The
-	// substrate/platform partition above is preserved: slabs stay at the
-	// very back, bodies sort among themselves.
+	flat, nSubstrates := orderCompositeParts(flat, canvas, n.GridStep)
+	flat = resolveGroupLabelOcclusion(flat, theme)
 	depthSorted := canvas != nil && canvas.DepthSort
-	if depthSorted {
-		depthSortParts(flat, nSubstrates, n.GridStep)
-	}
 
 	infos := make([]partInfo, len(flat))
 	glowPad := 0.0
@@ -241,6 +170,9 @@ func renderComposite(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation, 
 		}
 		cp := iso25d.CompositePart{ID: svgID, Shape: shape, Opts: opts, OffWX: ox, OffWY: oy, OffWZ: oz}
 		parts = append(parts, cp)
+		if len(n.Connectors) > 0 {
+			rc.addPaint(svgID, shape, opts, ox, oy, oz)
+		}
 
 		// partInfo dims MUST match what RenderComposite draws (p.Opts.*),
 		// NOT the raw geom: an auto-sized group/boundary substrate has no
@@ -249,18 +181,23 @@ func renderComposite(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation, 
 		// partsScreenOrigin() compute a different projection origin (tx,ty)
 		// than RenderComposite, shifting the ENTIRE connector/label layer
 		// off the parts — the cause of edges detaching from their nodes.
-		// Use opts.* verbatim (incl. zero for label-only sub-parts) so this
-		// matches RenderComposite's bbox EXACTLY — a 140 fallback here would
-		// invent a phantom-wide part and skew the projection origin.
-		w, d, h := opts.Width, opts.Depth, opts.Height
+		// Resolve shape defaults through the same dimensions as RenderComposite;
+		// label-only sub-parts retain their non-solid geometry.
+		w, d, h := iso25d.ShapeDimensions(shape, opts)
+		var body *iso25d.ProjectedBody
+		if len(n.Connectors) > 0 && infoID != "" {
+			resolvedBody := iso25d.ShapeBody(shape, opts)
+			body = &resolvedBody
+		}
 		infos[i] = partInfo{
-			id: infoID, shape: p.Shape,
+			id: infoID, shape: strings.ToLower(strings.TrimSpace(shape)),
 			w: w, d: d, h: h, offWX: ox, offWY: oy, offWZ: oz,
 			screenLabel: screenLabel, labelBg: labelBg, labelBorder: labelBorder,
 			labelColor: labelColor, labelFamily: labelFamily, labelWeight: labelWeight,
 			labelFontSize: labelSize,
 			sides:         sidesOf(p),
 			isSubstrate:   p.isSubstrate,
+			body:          body,
 		}
 	}
 
@@ -274,13 +211,58 @@ func renderComposite(n *Node, theme *Theme, canvas *Canvas, anns []*Annotation, 
 	//   2. canvas-bg last  (will end up at the very top of doc order
 	//                       = painted first = furthest back)
 	var connRects []screenRect
+	protection := screenLabelProtection{uncertain: len(anns) > 0 || len(n.Annotations) > 0}
+	var labelProtection *screenLabelProtection
+	for _, p := range infos {
+		if p.screenLabel != "" {
+			labelProtection = &protection
+			break
+		}
+	}
+	if labelProtection != nil && !protection.uncertain {
+		protection.prepare = func(p *screenLabelProtection) { protectScreenLabelContent(parts, infos, p) }
+	}
 	if len(n.Connectors) > 0 {
-		svg, connRects = injectCompositeConnectors(svg, n.Connectors, infos, n.Parts, nSubstrates, rc, depthSorted)
+		workRC := rc
+		var spatial connectorSpatialScene
+		if depthSorted && spatialVisibility {
+			spatial = prepareConnectorSpatial(parts)
+			if spatial.reason == "" && (rc == nil || rc.preClipOnly) {
+				workRC = &routeCollector{}
+				for _, p := range parts {
+					workRC.addPaint(p.ID, p.Shape, p.Opts, p.OffWX, p.OffWY, p.OffWZ)
+				}
+			}
+		}
+		bodySource := func() (connectorTextBodies, bool) {
+			if len(anns) > 0 || len(n.Annotations) > 0 {
+				return connectorTextBodies{}, false
+			}
+			return connectorTextBodyRegions(parts, infos)
+		}
+		svg, connRects = injectCompositeConnectors(svg, n.Connectors, infos, n.Parts, nSubstrates, workRC, depthSorted, labelProtection, bodySource)
+		if depthSorted && spatialVisibility {
+			svg = applyConnectorSpatial(svg, workRC, spatial, len(parts))
+		}
+		if rc != nil && workRC != rc {
+			rc.routes = workRC.routes
+			rc.paint, rc.partPaint = workRC.paint, workRC.partPaint
+			if rc.preClipOnly {
+				for i := range rc.routes {
+					rc.routes[i].Drawing = nil
+					rc.routes[i].World3D = nil
+				}
+			}
+		}
 	}
 	if canvas != nil {
 		svg = injectCanvasBackground(svg, canvas)
 	}
-	svg, labelRects := injectScreenLabels(svg, infos, connRects)
+	var screenLabels *[]ScreenLabel
+	if rc != nil {
+		screenLabels = rc.screenLabels
+	}
+	svg, labelRects := injectScreenLabelsProtected(svg, infos, connRects, screenLabels, protection)
 	// v3.0 — node-level annotations join the document-level list so
 	// `nodes.X.annotations` is honoured instead of silently dropped.
 	allAnns := append(append([]*Annotation(nil), anns...), n.Annotations...)

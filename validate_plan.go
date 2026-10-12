@@ -50,11 +50,7 @@ func planFootprintComposite(n *Node, canvas *Canvas, nodeID string) []Issue {
 	// Solve on a clone — Validate must never mutate the doc — then walk the
 	// solved tree accumulating each part's ABSOLUTE plan corner, exactly as
 	// planCollect does for the renderer, so the check matches what is drawn.
-	clone := &Node{Shape: n.Shape, GridStep: n.GridStep, Parts: cloneParts(n.Parts)}
-	if n.Layout != nil {
-		l := *n.Layout
-		clone.Layout = &l
-	}
+	clone := cloneSceneForEval(n)
 	applyLayout(clone, canvas)
 
 	var boxes []planBox
@@ -64,11 +60,8 @@ func planFootprintComposite(n *Node, canvas *Canvas, nodeID string) []Issue {
 			if p == nil {
 				continue
 			}
-			x, y := ox, oy
-			if p.Offset != nil {
-				x += p.Offset.WX
-				y += p.Offset.WY
-			}
+			x, y, _ := partLocalOffset(p, clone.GridStep)
+			x, y = x+ox, y+oy
 			w, d, _ := planDims(p.Shape, p.Geom)
 			container := isContainerShape(p.Shape) || len(p.Parts) > 0
 

@@ -76,6 +76,10 @@ func arrayParams(shapeName string, params map[string]any) (cX, cY, cZ int, gap f
 // RenderIsoArray renders a tiled N×M×K grid of small iso boxes.
 // The grid's overall bounding box is o.Width × o.Depth × o.Height.
 func RenderIsoArray(o IsoBoxOpts, shapeName string) string {
+	return renderIsoArray(o, shapeName, nil)
+}
+
+func renderIsoArray(o IsoBoxOpts, shapeName string, fonts fontResources) string {
 	cX, cY, cZ, gap := arrayParams(shapeName, o.Params)
 
 	// Compute cell dimensions from grid parameters
@@ -211,6 +215,7 @@ func RenderIsoArray(o IsoBoxOpts, shapeName string) string {
 		g.E[0], g.E[1], o.Width, o.Depth,
 		o.Label, o.LabelLines, o.Icon, o.IconScale, o.IconAnchor, o.IconOffX, o.IconOffY,
 		o.FontFamily, o.FontSize, o.FontWeight, o.FontColor,
+		fonts,
 	)
 
 	closeWrapper(&sb)

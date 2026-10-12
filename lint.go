@@ -62,25 +62,18 @@ func lintComposite(n *Node, theme *Theme, canvas *Canvas, nodeID string) []Issue
 	walk(n.Parts, "")
 
 	// Solve positions on a clone — Validate/Lint must never mutate the doc.
-	clone := &Node{Shape: n.Shape, GridStep: n.GridStep, Parts: cloneParts(n.Parts)}
-	if n.Layout != nil {
-		l := *n.Layout
-		clone.Layout = &l
-	}
+	clone := cloneSceneForEval(n)
 	applyLayout(clone, canvas)
-	flat := lowerCompositeParts(clone.Parts, 0, 0, 0)
+	flat := lowerCompositeParts(clone.Parts, 0, 0, 0, clone.GridStep)
 
 	boxes := make([]lintBox, 0, len(flat))
 	for _, p := range flat {
 		if p == nil || p.isSubstrate || p.ID == "" || isGhostPart(p) {
 			continue
 		}
-		// Use the dims as DRAWN (Flatten → opts.*), matching the renderer
-		// exactly — raw geom would invent a 140 default for auto-sized parts.
-		sub := &Node{Shape: p.Shape, Geom: p.Geom, Style: p.Style, Preset: p.Preset, Icon: p.Icon, Content: p.Content}
-		_, opts := Flatten(sub, theme)
-		if opts.Width <= 0 || opts.Depth <= 0 || opts.Height <= 0 {
-			continue // label-only / zero-dim sub-parts occupy no solid space
+		w, d, h := partDimensions(p)
+		if w <= 0 || d <= 0 || h <= 0 {
+			continue // label-only parts occupy no solid space
 		}
 		ox, oy, oz := 0.0, 0.0, 0.0
 		if p.Position != nil && clone.GridStep > 0 {
@@ -95,7 +88,7 @@ func lintComposite(n *Node, theme *Theme, canvas *Canvas, nodeID string) []Issue
 		boxes = append(boxes, lintBox{
 			id: p.ID, parent: parent[p.ID],
 			x0: ox, y0: oy, z0: oz,
-			x1: ox + opts.Width, y1: oy + opts.Depth, z1: oz + opts.Height,
+			x1: ox + w, y1: oy + d, z1: oz + h,
 		})
 	}
 
