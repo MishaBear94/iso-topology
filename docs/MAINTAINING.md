@@ -1,6 +1,7 @@
 # Maintaining the official documentation
 
-The Mintlify site uses this repository's `docs/` directory directly. There is no
+The official site is **https://iso-topology.mintlify.site/**. It uses this
+repository's `docs/` directory directly. There is no
 second copy of the reference documentation and no separate documentation repo.
 `docs.json` defines navigation and branding; `index.mdx`, `quickstart.mdx`, and
 `gallery.mdx` are the site's entry pages. Existing Markdown pages remain the
@@ -50,13 +51,13 @@ The Documentation workflow checks generated-file drift, build warnings, broken
 internal links, heading anchors, and redirects. External links are reviewed
 separately because availability and rate limits can make them intermittent.
 
-## Hosting setup
+## Hosting and deployment
 
 Use Mintlify's free **Starter** plan and its assigned free subdomain. A paid
 plan, custom domain, and credit card are not needed for the initial site.
 Confirm the current plan in the dashboard before completing onboarding.
 
-Create a new project for **iso-topology**, then connect:
+The **iso-topology** project is connected with these settings:
 
 | Setting | Value |
 |---|---|
@@ -64,7 +65,8 @@ Create a new project for **iso-topology**, then connect:
 | Branch | `main` |
 | Documentation directory | `docs` |
 | Configuration | `docs/docs.json` |
-| Preferred subdomain | `iso-topology`, if available |
+| Public URL | `https://iso-topology.mintlify.site/` |
+| Mintlify organization / project | `sponson` / `iso-topology` |
 
 If installing the Mintlify GitHub App, grant access only to this repository.
 Do not replace an existing documentation project. With the repository
@@ -73,16 +75,24 @@ needed in GitHub Actions. Mintlify can deploy independently of the validation
 workflow, so check the workflow before treating a change as verified. Use branch
 protection requiring the Documentation check if maintainers want enforcement.
 
-After the first successful deployment:
+For each published change:
 
-1. Record the **actual** public URL in this file and link it from the root README.
-2. Check the overview, quickstart, gallery, schema download, and sample links on
+1. Check the Documentation workflow and the deployment in the
+   [Mintlify activity dashboard](https://app.mintlify.com/sponson/iso-topology/activity).
+2. Check the overview, quickstart, gallery,
+   [schema download](https://iso-topology.mintlify.site/agent/schema/dsl.schema.json), and sample links on
    the public URL. Check search after indexing completes.
 3. Verify that the deployment corresponds to the intended Git commit.
 4. Verify that the plan remains Starter and no paid add-on is enabled.
 
-Deployment status: prepared locally; account connection and the first hosted
-deployment still need to be completed. No public URL is claimed yet.
+The first hosted deployment succeeded on **2026-10-12**, using documentation
+from commit `756ea0c9a3b4e0adfa7802ad3a9ead73032bcc4d`. The 27 navigation pages,
+`sitemap.xml`, `llms.txt`, and `llms-full.txt` are publicly accessible. The root
+READMEs link to the official site.
+
+The dashboard's current plan is **Starter ($0/month)**. An existing promotional
+Pro trial is separate from the site's hosting requirement; do not upgrade or
+make the documentation depend on trial-only features.
 
 ## Recovery and later changes
 
